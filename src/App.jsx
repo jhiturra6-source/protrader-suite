@@ -161,6 +161,34 @@ export default function App() {
   const seriesRef = useRef({});
   const linesRef = useRef({});
 
+  const [capital, setCapital] = useState("10000");
+  const [riskPercent, setRiskPercent] = useState("1,5");
+  const [entryPrice, setEntryPrice] = useState("150,00");
+  const [stopLoss, setStopLoss] = useState("145,00");
+  const [takeProfit, setTakeProfit] = useState("165,00");
+  const [shares, setShares] = useState("100");
+
+  const numCapital = parseToFloat(capital);
+  const numRiskPercent = parseToFloat(riskPercent);
+  const numEntryPrice = parseToFloat(entryPrice);
+  const numStopLoss = parseToFloat(stopLoss);
+  const numTakeProfit = parseToFloat(takeProfit);
+  const numShares = parseToFloat(shares);
+
+  const m1_riskPerShare = numEntryPrice - numStopLoss;
+  const m1_totalRisk = numShares * m1_riskPerShare;
+  const m1_projectedProfit = (numTakeProfit - numEntryPrice) * numShares;
+  const m1_actualRiskPercent = numCapital > 0 ? (m1_totalRisk / numCapital) * 100 : 0; 
+  const isInvalidLong = numEntryPrice <= numStopLoss && numEntryPrice > 0;
+
+  const handleNumberChange = (setter) => (e) => {
+    let val = e.target.value.replace(/\./g, '');
+    val = val.replace(/[^0-9,]/g, '');
+    const parts = val.split(',');
+    if (parts.length > 2) val = parts[0] + ',' + parts.slice(1).join('');
+    setter(val);
+  };
+
   // API Fetch
   useEffect(() => {
     const fetchRealMarketData = async () => {
@@ -226,18 +254,22 @@ export default function App() {
       default: return;
     }
     
-    chartsRef.current.main.timeScale().setVisibleRange({
-      from: startDate.toISOString().split('T')[0],
-      to: lastDate.toISOString().split('T')[0]
-    });
+    try {
+      chartsRef.current.main.timeScale().setVisibleRange({
+        from: startDate.toISOString().split('T')[0],
+        to: lastDate.toISOString().split('T')[0]
+      });
+    } catch (e) {
+      console.warn("Rango inválido temporalmente");
+    }
   };
 
-  // --- INICIALIZACIÓN DE GRÁFICOS (SINCRONIZADOS) ---
+  // --- INICIALIZACIÓN DE GRÁFICOS (SINCRONIZACIÓN BLINDADA) ---
   useEffect(() => {
     if (!mainChartContainerRef.current) return;
 
     const commonOptions = {
-      layout: { background: { type: 'solid', color: '#151922' }, textColor: '#94a3b8' }, // Color Koyfin
+      layout: { background: { type: 'solid', color: '#151922' }, textColor: '#94a3b8' },
       grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: '#2a2e39' },
@@ -262,7 +294,7 @@ export default function App() {
     const volumeSeries = mainChart.addHistogramSeries({
       color: '#26a69a',
       priceFormat: { type: 'volume' },
-      priceScaleId: '', // Overlay
+      priceScaleId: '', 
       scaleMargins: { top: 0.8, bottom: 0 },
     });
     seriesRef.current.volume = volumeSeries;
@@ -280,7 +312,7 @@ export default function App() {
       }
     });
 
-    // Rango de Fechas Visible
+    // Rango de Fechas Visible en UI Superior (Solo leemos de mainChart)
     mainChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
       if (range && range.from && range.to) {
         const start = new Date(range.from * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -301,14 +333,24 @@ export default function App() {
       chartsRef.current.rsi = rsiChart;
     }
 
-    // Sincronización Maestra de TimeScales
+    // Sincronización Maestra de TimeScales (LÓGICA BLINDADA ANTI-CRASH)
     const syncCharts = () => {
       const allCharts = [chartsRef.current.main, chartsRef.current.macd, chartsRef.current.rsi].filter(Boolean);
+      
       allCharts.forEach(sourceChart => {
-        sourceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
-          if (!range) return;
+        // Usamos LogicalRange (índices) porque es mucho más seguro que TimeRange cuando un chart no ha cargado datos.
+        sourceChart.timeScale().subscribeVisibleLogicalRangeChange(logicalRange => {
+          if (!logicalRange) return;
+          
           allCharts.forEach(targetChart => {
-            if (targetChart !== sourceChart) targetChart.timeScale().setVisibleRange(range);
+            if (targetChart !== sourceChart) {
+              try {
+                // Try-catch evita que la app colapse si targetChart aún no tiene datos suficientes.
+                targetChart.timeScale().setVisibleLogicalRange(logicalRange);
+              } catch (err) {
+                // Silencioso. El gráfico se sincronizará en el siguiente render válido.
+              }
+            }
           });
         });
       });
@@ -329,7 +371,7 @@ export default function App() {
       Object.values(chartsRef.current).forEach(chart => chart && chart.remove());
       chartsRef.current = {};
     };
-  }, [showMACD, showRSI]); // Remontar si cambian los paneles independientes
+  }, [showMACD, showRSI]); 
 
   // --- LLENADO DE DATOS E INDICADORES (Actualización en tiempo real) ---
   useEffect(() => {
@@ -337,7 +379,6 @@ export default function App() {
     
     const mainChart = chartsRef.current.main;
     
-    // Configurar Visibilidad del gráfico principal
     seriesRef.current.candles.applyOptions({ visible: showMainChart });
     seriesRef.current.volume.applyOptions({ visible: showMainChart });
 
@@ -346,7 +387,6 @@ export default function App() {
       seriesRef.current.volume.setData(chartData.map(d => ({ time: d.time, value: d.volume, color: d.close >= d.open ? '#26a69a80' : '#ef535080' })));
     }
 
-    // Actualizar Leyenda inicial
     const last = chartData[chartData.length - 1];
     if (last) {
       const diff = last.close - last.open;
@@ -356,7 +396,6 @@ export default function App() {
         change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`
       });
 
-      // Crear Etiqueta del Precio Actual Color Azul (Koyfin Style)
       if (linesRef.current.tickerPrice) seriesRef.current.candles.removePriceLine(linesRef.current.tickerPrice);
       if (showMainChart) {
         linesRef.current.tickerPrice = seriesRef.current.candles.createPriceLine({
@@ -365,7 +404,6 @@ export default function App() {
       }
     }
 
-    // --- Limpiar y Redibujar Líneas ---
     Object.keys(seriesRef.current).forEach(key => {
       if (key !== 'candles' && key !== 'volume' && seriesRef.current[key]) {
         if (mainChart && mainChart.timeScale) {
@@ -408,6 +446,34 @@ export default function App() {
     }
 
   }, [chartData, showMainChart, showSMA200, showSMA50, showEMA21, showEMA10, showMACD, showRSI, currentTicker]);
+
+  useEffect(() => {
+    if (!seriesRef.current.candles) return;
+    const series = seriesRef.current.candles;
+
+    if (linesRef.current.entry) series.removePriceLine(linesRef.current.entry);
+    if (linesRef.current.sl) series.removePriceLine(linesRef.current.sl);
+    if (linesRef.current.tp) series.removePriceLine(linesRef.current.tp);
+
+    if (numEntryPrice > 0) {
+      linesRef.current.entry = series.createPriceLine({
+        price: numEntryPrice, color: '#3b82f6', lineWidth: 2, lineStyle: 2, 
+        axisLabelColor: '#3b82f6', axisLabelTextColor: '#ffffff', title: ''
+      });
+    }
+    if (numStopLoss > 0) {
+      linesRef.current.sl = series.createPriceLine({
+        price: numStopLoss, color: '#ef4444', lineWidth: 2, lineStyle: 2, 
+        axisLabelColor: '#ef4444', axisLabelTextColor: '#ffffff', title: ''
+      });
+    }
+    if (numTakeProfit > 0) {
+      linesRef.current.tp = series.createPriceLine({
+        price: numTakeProfit, color: '#10b981', lineWidth: 2, lineStyle: 2, 
+        axisLabelColor: '#10b981', axisLabelTextColor: '#ffffff', title: ''
+      });
+    }
+  }, [numEntryPrice, numStopLoss, numTakeProfit]);
 
   // --- LÓGICA DE DIBUJO SVG ---
   const handleSVGMouseDown = (e) => {
@@ -519,7 +585,7 @@ export default function App() {
                </div>
             </div>
 
-            {/* Panel de Herramientas de Dibujo (Extraído del gráfico para limpiar visual) */}
+            {/* Panel de Herramientas de Dibujo */}
             <div className="bg-[#151922] border border-[#2a2e39] rounded-xl p-3 shadow-xl flex flex-wrap gap-1.5 justify-center">
               <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-[#2a2e39] text-blue-400' : 'text-slate-400 hover:bg-[#2a2e39] hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
               <button onClick={() => setActiveTool("arrow")} className={`p-2 rounded-lg transition ${activeTool === 'arrow' ? 'bg-[#2a2e39] text-blue-400' : 'text-slate-400 hover:bg-[#2a2e39] hover:text-white'}`} title="Flecha directiva"><MoveUpRight className="w-4 h-4" /></button>
@@ -528,8 +594,6 @@ export default function App() {
               <button onClick={() => setActiveTool("eraser")} className={`p-2 rounded-lg transition ${activeTool === 'eraser' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50' : 'text-slate-400 hover:bg-[#2a2e39] hover:text-white'}`} title="Borrador"><Eraser className="w-4 h-4" /></button>
               <button onClick={() => setDrawings([])} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar Todo"><Trash2 className="w-4 h-4" /></button>
             </div>
-            
-            {/* Ocultamos los calculos temporalmente si quieres priorizar el chart, o los mantenemos abajo */}
           </div>
 
           {/* SECTOR DERECHO: Charts Apilados Profesionales */}
