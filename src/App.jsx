@@ -78,8 +78,8 @@ export default function App() {
   // Valores de las medias móviles actuales para panel lateral derecho
   const [maValues, setMaValues] = useState({ sma200: '-', sma50: '-', ema21: '-', ema10: '-' });
 
-  // OHLC Legend State
-  const [ohlcData, setOhlcData] = useState({ o: '-', h: '-', l: '-', c: '-', change: '-' });
+  // Tooltip flotante OHLC estilo TradingView
+  const [tooltipData, setTooltipData] = useState(null);
 
   // Inputs de Riesgo
   const [capital, setCapital] = useState("10000");
@@ -168,7 +168,7 @@ export default function App() {
     setCurrentTicker(tickerInput.toUpperCase().trim());
   };
 
-  // Inicialización del Gráfico con zoom inteligente (tickMarkFormatter) y escala de fechas adaptable
+  // Inicializar Gráfico
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -189,7 +189,6 @@ export default function App() {
         fixRightEdge: false,
         rightOffset: 12,
         barSpacing: 10,
-        // Zoom inteligente: escala de días, semanas o meses automáticamente
         tickMarkFormatter: (time, tickMarkType, locale) => {
           const date = new Date(time.year, time.month - 1, time.day);
           if (tickMarkType === 2) {
@@ -212,38 +211,46 @@ export default function App() {
     seriesRef.current = series;
 
     chart.subscribeCrosshairMove((param) => {
-      if (param.time && param.seriesData.get(series)) {
-        const data = param.seriesData.get(series);
-        const diff = data.close - data.open;
-        const pct = (diff / data.open) * 100;
-        setOhlcData({
-          o: formatCurrency(data.open),
-          h: formatCurrency(data.high),
-          l: formatCurrency(data.low),
-          c: formatCurrency(data.close),
-          change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`
-        });
-
-        // Actualizar valores de medias móviles según la vela seleccionada por el cursor
-        const calcValues = {};
-        if (indicatorsRef.current.sma200) {
-          const val = param.seriesData.get(indicatorsRef.current.sma200);
-          calcValues.sma200 = val ? formatCurrency(val.value) : '-';
-        }
-        if (indicatorsRef.current.sma50) {
-          const val = param.seriesData.get(indicatorsRef.current.sma50);
-          calcValues.sma50 = val ? formatCurrency(val.value) : '-';
-        }
-        if (indicatorsRef.current.ema21) {
-          const val = param.seriesData.get(indicatorsRef.current.ema21);
-          calcValues.ema21 = val ? formatCurrency(val.value) : '-';
-        }
-        if (indicatorsRef.current.ema10) {
-          const val = param.seriesData.get(indicatorsRef.current.ema10);
-          calcValues.ema10 = val ? formatCurrency(val.value) : '-';
-        }
-        setMaValues(prev => ({ ...prev, ...calcValues }));
+      if (!param.time || !param.point || !param.seriesData.get(series)) {
+        setTooltipData(null);
+        return;
       }
+      const data = param.seriesData.get(series);
+      const diff = data.close - data.open;
+      const pct = (diff / data.open) * 100;
+
+      setTooltipData({
+        x: param.point.x,
+        y: param.point.y,
+        ticker: currentTicker,
+        time: typeof param.time === 'object' ? `${param.time.year}-${param.time.month}-${param.time.day}` : param.time,
+        open: formatCurrency(data.open),
+        high: formatCurrency(data.high),
+        low: formatCurrency(data.low),
+        close: formatCurrency(data.close),
+        change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`,
+        isUp: diff >= 0
+      });
+
+      // Actualizar valores de medias móviles según la vela seleccionada
+      const calcValues = {};
+      if (indicatorsRef.current.sma200) {
+        const val = param.seriesData.get(indicatorsRef.current.sma200);
+        calcValues.sma200 = val ? formatCurrency(val.value) : '-';
+      }
+      if (indicatorsRef.current.sma50) {
+        const val = param.seriesData.get(indicatorsRef.current.sma50);
+        calcValues.sma50 = val ? formatCurrency(val.value) : '-';
+      }
+      if (indicatorsRef.current.ema21) {
+        const val = param.seriesData.get(indicatorsRef.current.ema21);
+        calcValues.ema21 = val ? formatCurrency(val.value) : '-';
+      }
+      if (indicatorsRef.current.ema10) {
+        const val = param.seriesData.get(indicatorsRef.current.ema10);
+        calcValues.ema10 = val ? formatCurrency(val.value) : '-';
+      }
+      setMaValues(prev => ({ ...prev, ...calcValues }));
     });
 
     const handleResize = () => {
@@ -257,25 +264,12 @@ export default function App() {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, []);
+  }, [currentTicker]);
 
-  // Actualizar datos y series de las medias móviles (sin líneas horizontales de puntos)
+  // Actualizar datos y series de las medias móviles
   useEffect(() => {
     if (!seriesRef.current || chartData.length === 0) return;
     seriesRef.current.setData(chartData);
-
-    const last = chartData[chartData.length - 1];
-    if (last) {
-      const diff = last.close - last.open;
-      const pct = (diff / last.open) * 100;
-      setOhlcData({
-        o: formatCurrency(last.open),
-        h: formatCurrency(last.high),
-        l: formatCurrency(last.low),
-        c: formatCurrency(last.close),
-        change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`
-      });
-    }
 
     Object.keys(indicatorsRef.current).forEach(key => {
       if (indicatorsRef.current[key]) {
@@ -307,7 +301,7 @@ export default function App() {
     }
   }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
-  // Líneas de precio de entrada, stop loss y take profit en el gráfico
+  // Líneas de precio de entrada, stop loss y take profit sin leyendas de texto intrusivas
   useEffect(() => {
     if (!seriesRef.current) return;
     const series = seriesRef.current;
@@ -318,24 +312,25 @@ export default function App() {
 
     if (numEntryPrice > 0) {
       linesRef.current.entry = series.createPriceLine({
-        price: numEntryPrice, color: '#38bdf8', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'ENTRADA',
+        price: numEntryPrice, color: '#38bdf8', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
       });
     }
     if (numStopLoss > 0) {
       linesRef.current.sl = series.createPriceLine({
-        price: numStopLoss, color: '#f43f5e', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'STOP LOSS',
+        price: numStopLoss, color: '#f43f5e', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
       });
     }
     if (numTakeProfit > 0) {
       linesRef.current.tp = series.createPriceLine({
-        price: numTakeProfit, color: '#10b981', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'TAKE PROFIT',
+        price: numTakeProfit, color: '#10b981', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
       });
     }
   }, [numEntryPrice, numStopLoss, numTakeProfit]);
 
-  // Manejo interactivo de herramientas de dibujo (Línea de tendencia y Medir rango con clics de inicio y fin)
+  // Herramientas de dibujo interactivas sin paneo/movimiento del gráfico de fondo
   const handleMouseDown = (e) => {
     if (activeTool === 'pointer' || activeTool === 'text') return;
+    e.stopPropagation(); // Evita que el gráfico capture el evento de arrastre nativo
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -351,6 +346,7 @@ export default function App() {
 
   const handleMouseMove = (e) => {
     if (!currentDrawing) return;
+    e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -511,15 +507,6 @@ export default function App() {
                   EMA 10
                 </button>
               </div>
-
-              {/* Ventana flotante de OHLC integrada */}
-              <div className="flex items-center gap-2 text-[11px] font-mono bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
-                <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
-                <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
-                <div><span className="text-slate-500">L:</span> <span className="text-rose-400">{ohlcData.l}</span></div>
-                <div><span className="text-slate-500">C:</span> <span className="text-white">{ohlcData.c}</span></div>
-                <div className="pl-1 border-l border-slate-800"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{ohlcData.change}</span></div>
-              </div>
             </div>
 
             <div className="flex flex-col md:flex-row relative">
@@ -541,8 +528,40 @@ export default function App() {
                     onClick={handleChartClick}
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
-                    className="w-full h-[450px] cursor-crosshair rounded-2xl overflow-hidden"
-                  ></div>
+                    className="w-full h-[450px] cursor-crosshair rounded-2xl overflow-hidden relative"
+                  >
+                    {/* Ventana flotante de OHLC estilo TradingView (Sigue el cursor) */}
+                    {tooltipData && (
+                      <div 
+                        style={{ 
+                          left: `${Math.min(Math.max(10, tooltipData.x + 15), 350)}px`, 
+                          top: `${Math.max(10, tooltipData.y - 60)}px` 
+                        }}
+                        className="absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700/80 rounded-xl p-2.5 shadow-2xl backdrop-blur-md text-[11px] font-mono min-w-[150px]"
+                      >
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5 font-sans font-bold text-white">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                            {tooltipData.ticker}
+                          </span>
+                          <span className="text-[10px] text-slate-400">{tooltipData.time}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                          <div className="text-slate-400">Close</div>
+                          <div className="text-right text-white font-semibold">{tooltipData.close}</div>
+                          <div className="text-slate-400">Open</div>
+                          <div className="text-right text-white">{tooltipData.open}</div>
+                          <div className="text-slate-400">Low</div>
+                          <div className="text-right text-rose-400">{tooltipData.low}</div>
+                          <div className="text-slate-400">High</div>
+                          <div className="text-right text-emerald-400">{tooltipData.high}</div>
+                        </div>
+                        <div className={`mt-1.5 pt-1 border-t border-slate-800 text-right font-bold ${tooltipData.isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {tooltipData.change}
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   {/* SVG para renderizar dibujos interactivos con flechas y porcentajes */}
                   <div className="absolute inset-0 z-10 pointer-events-none">
@@ -598,7 +617,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* PANEL LATERAL DERECHO: Niveles Clave y Medias Móviles fuera de la pizarra de precios */}
+                {/* PANEL LATERAL DERECHO: Niveles Clave y Medias Móviles */}
                 <div className="w-48 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 flex flex-col justify-between space-y-3 shrink-0 backdrop-blur-sm">
                   <div>
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Niveles Clave</h3>
