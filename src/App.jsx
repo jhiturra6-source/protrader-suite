@@ -69,7 +69,7 @@ export default function App() {
   const [drawings, setDrawings] = useState([]);
   const [currentDrawing, setCurrentDrawing] = useState(null);
 
-  // Estados de Indicadores (Solo se mantienen medias móviles)
+  // Estados de Indicadores
   const [showSMA200, setShowSMA200] = useState(false);
   const [showSMA50, setShowSMA50] = useState(true);
   const [showEMA21, setShowEMA21] = useState(false);
@@ -168,19 +168,19 @@ export default function App() {
     setCurrentTicker(tickerInput.toUpperCase().trim());
   };
 
-  // Inicializar Gráfico con escala de fechas visible abajo y crosshair personalizado
+  // Inicialización del Gráfico con zoom inteligente (tickMarkFormatter) y escala de fechas adaptable
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     const chart = createChart(chartContainerRef.current, {
-      layout: { background: { type: 'solid', color: '#0f172a' }, textColor: '#94a3b8' },
-      grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+      layout: { background: { type: 'solid', color: '#090d16' }, textColor: '#94a3b8' },
+      grid: { vertLines: { color: '#111827' }, horzLines: { color: '#111827' } },
       crosshair: { 
-        mode: 0, // Permite movimiento libre y preciso del cursor
+        mode: 0, 
         vertLine: { color: '#38bdf8', width: 1, style: LineStyle.Dasched, labelBackgroundColor: '#0284c7' },
         horzLine: { color: '#38bdf8', width: 1, style: LineStyle.Dasched, labelBackgroundColor: '#0284c7' }
       },
-      rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.1, bottom: 0.2 } },
+      rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.1, bottom: 0.1 } },
       timeScale: { 
         borderColor: '#1e293b', 
         timeVisible: true,
@@ -188,6 +188,15 @@ export default function App() {
         fixLeftEdge: false,
         fixRightEdge: false,
         rightOffset: 12,
+        barSpacing: 10,
+        // Zoom inteligente: escala de días, semanas o meses automáticamente
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          const date = new Date(time.year, time.month - 1, time.day);
+          if (tickMarkType === 2) {
+            return date.toLocaleDateString(locale, { month: 'short', year: '2-digit' });
+          }
+          return date.toLocaleDateString(locale, { day: 'numeric', month: 'short' });
+        },
       },
       width: chartContainerRef.current.clientWidth,
       height: 480,
@@ -334,7 +343,6 @@ export default function App() {
     if (!currentDrawing) {
       setCurrentDrawing({ type: activeTool, x1: x, y1: y, x2: x, y2: y });
     } else {
-      // Finalizar dibujo al segundo clic
       const finished = { ...currentDrawing, id: Date.now(), x2: x, y2: y };
       setDrawings(prev => [...prev, finished]);
       setCurrentDrawing(null);
@@ -464,194 +472,186 @@ export default function App() {
             )}
           </div>
 
-          {/* SECTOR DERECHO: Gráfico, Barra de Indicadores Integrada y Detalles de Precios a la Derecha */}
-          <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-3xl p-3 shadow-2xl relative flex flex-col">
+          {/* SECTOR DERECHO: Diseño Pulcro, Limpio y Profesional del Gráfico */}
+          <div className="lg:col-span-8 bg-slate-950 border border-slate-800/80 rounded-3xl p-3 shadow-2xl relative flex flex-col">
             
-            {/* BARRA DE INDICADORES INTEGRADA ARRIBA (Sin entorpecer precios) */}
-            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2.5 mb-3 flex flex-wrap items-center justify-between gap-2 z-20">
-              <div className="text-xs font-medium text-white flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Medias Móviles:</span>
-              </div>
+            {/* PANEL DE CONTROL SUPERIOR MINIMALISTA */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-3 py-2.5 mb-2 bg-slate-900/40 border border-slate-800/60 rounded-2xl z-20">
+              <form onSubmit={handleSearchTicker} className="flex items-center gap-2">
+                <div className="relative">
+                  <input 
+                     type="text" 
+                     value={tickerInput}
+                     onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
+                     className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-24 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider"
+                     placeholder="AAPL"
+                  />
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2" />
+                </div>
+                <button type="submit" disabled={isLoadingData} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1">
+                  {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
+                </button>
+                <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                  {currentTicker}
+                </span>
+              </form>
+
+              {/* Botones compactos de Medias Móviles */}
               <div className="flex flex-wrap items-center gap-1.5">
-                <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                  {showSMA200 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} SMA 200
+                <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                  SMA 200
                 </button>
-                <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                  {showSMA50 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} SMA 50
+                <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                  SMA 50
                 </button>
-                <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                  {showEMA21 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} EMA 21
+                <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                  EMA 21
                 </button>
-                <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                  {showEMA10 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} EMA 10
+                <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                  EMA 10
                 </button>
+              </div>
+
+              {/* Ventana flotante de OHLC integrada */}
+              <div className="flex items-center gap-2 text-[11px] font-mono bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
+                <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
+                <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
+                <div><span className="text-slate-500">L:</span> <span className="text-rose-400">{ohlcData.l}</span></div>
+                <div><span className="text-slate-500">C:</span> <span className="text-white">{ohlcData.c}</span></div>
+                <div className="pl-1 border-l border-slate-800"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{ohlcData.change}</span></div>
               </div>
             </div>
 
             <div className="flex flex-col md:flex-row relative">
-              {/* Barra de herramientas de dibujo */}
-              <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-20">
+              {/* Barra de herramientas de dibujo lateral */}
+              <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800/60 bg-slate-900/30 items-center justify-start z-20">
                 <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
                 <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
                 <button onClick={() => setActiveTool("text")} className={`p-2 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-4 h-4" /></button>
                 <button onClick={() => setActiveTool("ruler")} className={`p-2 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-4 h-4" /></button>
-                <div className="w-px h-5 md:w-5 md:h-px bg-slate-700 my-1"></div>
+                <div className="w-px h-5 md:w-5 md:h-px bg-slate-800 my-1"></div>
                 <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-4 h-4" /></button>
               </div>
 
-              <div className="flex-1 p-2 relative flex flex-col justify-between">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2 z-20 relative">
-                  <form onSubmit={handleSearchTicker} className="flex items-center gap-1.5">
-                    <div className="relative">
-                      <input 
-                         type="text" 
-                         value={tickerInput}
-                         onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
-                         className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-28 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider"
-                         placeholder="AAPL"
-                      />
-                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2" />
-                    </div>
-                    <button type="submit" disabled={isLoadingData} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1">
-                      {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
-                    </button>
-                    <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20">
-                      {currentTicker}
-                    </span>
-                  </form>
+              <div className="flex-1 p-1 relative flex gap-3">
+                {/* Contenedor principal del gráfico */}
+                <div className="flex-1 relative">
+                  <div 
+                    ref={chartContainerRef} 
+                    onClick={handleChartClick}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    className="w-full h-[450px] cursor-crosshair rounded-2xl overflow-hidden"
+                  ></div>
 
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
-                    <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
-                    <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
-                    <div><span className="text-slate-500">L:</span> <span className="text-rose-400">{ohlcData.l}</span></div>
-                    <div><span className="text-slate-500">C:</span> <span className="text-white">{ohlcData.c}</span></div>
-                    <div className="pl-1.5 border-l border-slate-800"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{ohlcData.change}</span></div>
-                  </div>
-                </div>
-
-                <div className="flex gap-4">
-                  {/* Contenedor principal del gráfico */}
-                  <div className="flex-1 relative">
-                    <div 
-                      ref={chartContainerRef} 
-                      onClick={handleChartClick}
-                      onMouseDown={handleMouseDown}
-                      onMouseMove={handleMouseMove}
-                      className={`w-full h-[440px] ${activeTool !== 'pointer' ? 'cursor-crosshair' : 'cursor-crosshair'}`}
-                    ></div>
-
-                    {/* SVG para renderizar dibujos interactivos con flechas y porcentajes */}
-                    <div className="absolute inset-0 z-10 pointer-events-none">
-                      <svg className="w-full h-full overflow-visible">
-                        <defs>
-                          <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
-                          </marker>
-                        </defs>
-                        {drawings.map(d => {
-                          if (d.type === 'pencil') {
-                            return (
-                              <g key={d.id}>
-                                <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" markerEnd="url(#arrow)" />
-                                <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
-                                <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
-                              </g>
-                            );
-                          }
-                          if (d.type === 'ruler') {
-                            const diffY = d.y2 - d.y1;
-                            const pctDiff = ((d.y1 - d.y2) / Math.abs(d.y1 || 1)) * 100;
-                            const midX = (d.x1 + d.x2) / 2;
-                            const midY = (d.y1 + d.y2) / 2;
-                            return (
-                              <g key={d.id}>
-                                <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#10b981" strokeWidth="2" strokeDasharray="4" markerEnd="url(#arrow)" />
-                                <circle cx={d.x1} cy={d.y1} r="3" fill="#10b981" />
-                                <circle cx={d.x2} cy={d.y2} r="3" fill="#10b981" />
-                                <rect x={midX - 25} y={midY - 12} width="50" height="20" rx="4" fill="#0f172a" stroke="#10b981" strokeWidth="1" />
-                                <text x={midX} y={midY + 2} fill="#10b981" fontSize="10" fontWeight="bold" textAnchor="middle">
-                                  {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(2)}%
-                                </text>
-                              </g>
-                            );
-                          }
-                          if (d.type === 'text') {
-                            return (
-                              <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="11" fontWeight="bold">
-                                {d.text}
+                  {/* SVG para renderizar dibujos interactivos con flechas y porcentajes */}
+                  <div className="absolute inset-0 z-10 pointer-events-none">
+                    <svg className="w-full h-full overflow-visible">
+                      <defs>
+                        <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                          <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
+                        </marker>
+                      </defs>
+                      {drawings.map(d => {
+                        if (d.type === 'pencil') {
+                          return (
+                            <g key={d.id}>
+                              <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" markerEnd="url(#arrow)" />
+                              <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
+                              <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
+                            </g>
+                          );
+                        }
+                        if (d.type === 'ruler') {
+                          const pctDiff = ((d.y1 - d.y2) / Math.abs(d.y1 || 1)) * 100;
+                          const midX = (d.x1 + d.x2) / 2;
+                          const midY = (d.y1 + d.y2) / 2;
+                          return (
+                            <g key={d.id}>
+                              <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#10b981" strokeWidth="2" strokeDasharray="4" markerEnd="url(#arrow)" />
+                              <circle cx={d.x1} cy={d.y1} r="3" fill="#10b981" />
+                              <circle cx={d.x2} cy={d.y2} r="3" fill="#10b981" />
+                              <rect x={midX - 25} y={midY - 12} width="50" height="20" rx="4" fill="#0f172a" stroke="#10b981" strokeWidth="1" />
+                              <text x={midX} y={midY + 2} fill="#10b981" fontSize="10" fontWeight="bold" textAnchor="middle">
+                                {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(2)}%
                               </text>
-                            );
-                          }
-                          return null;
-                        })}
+                            </g>
+                          );
+                        }
+                        if (d.type === 'text') {
+                          return (
+                            <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="11" fontWeight="bold">
+                              {d.text}
+                            </text>
+                          );
+                        }
+                        return null;
+                      })}
 
-                        {/* Dibujo en tiempo real mientras se arrastra */}
-                        {currentDrawing && currentDrawing.type === 'pencil' && (
-                          <line x1={currentDrawing.x1} y1={currentDrawing.y1} x2={currentDrawing.x2} y2={currentDrawing.y2} stroke="#38bdf8" strokeWidth="2" markerEnd="url(#arrow)" />
-                        )}
-                        {currentDrawing && currentDrawing.type === 'ruler' && (
-                          <line x1={currentDrawing.x1} y1={currentDrawing.y1} x2={currentDrawing.x2} y2={currentDrawing.y2} stroke="#10b981" strokeWidth="2" strokeDasharray="4" markerEnd="url(#arrow)" />
-                        )}
-                      </svg>
-                    </div>
+                      {currentDrawing && currentDrawing.type === 'pencil' && (
+                        <line x1={currentDrawing.x1} y1={currentDrawing.y1} x2={currentDrawing.x2} y2={currentDrawing.y2} stroke="#38bdf8" strokeWidth="2" markerEnd="url(#arrow)" />
+                      )}
+                      {currentDrawing && currentDrawing.type === 'ruler' && (
+                        <line x1={currentDrawing.x1} y1={currentDrawing.y1} x2={currentDrawing.x2} y2={currentDrawing.y2} stroke="#10b981" strokeWidth="2" strokeDasharray="4" markerEnd="url(#arrow)" />
+                      )}
+                    </svg>
                   </div>
-
-                  {/* PANEL LATERAL DERECHO: Detalles de Take Profit, Entrada, Stop Loss y Medias Móviles (fuera de la pizarra) */}
-                  <div className="w-48 bg-slate-950 border border-slate-800 rounded-2xl p-3 flex flex-col justify-between space-y-3 shrink-0">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Niveles Clave</h3>
-                      <div className="space-y-2 text-xs">
-                        <div className="flex justify-between items-center bg-slate-900 p-1.5 rounded-lg border border-emerald-900/30">
-                          <span className="text-emerald-400 font-medium">Take Profit:</span>
-                          <span className="font-mono text-white">${formatCurrency(numTakeProfit)}</span>
-                        </div>
-                        <div className="flex justify-between items-center bg-slate-900 p-1.5 rounded-lg border border-blue-900/30">
-                          <span className="text-blue-400 font-medium">Entrada:</span>
-                          <span className="font-mono text-white">${formatCurrency(numEntryPrice)}</span>
-                        </div>
-                        <div className="flex justify-between items-center bg-slate-900 p-1.5 rounded-lg border border-rose-900/30">
-                          <span className="text-rose-400 font-medium">Stop Loss:</span>
-                          <span className="font-mono text-white">${formatCurrency(numStopLoss)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Medias Móviles</h3>
-                      <div className="space-y-1.5 text-xs font-mono">
-                        {showSMA200 && (
-                          <div className="flex justify-between items-center text-amber-300">
-                            <span>SMA 200:</span>
-                            <span>${maValues.sma200}</span>
-                          </div>
-                        )}
-                        {showSMA50 && (
-                          <div className="flex justify-between items-center text-blue-300">
-                            <span>SMA 50:</span>
-                            <span>${maValues.sma50}</span>
-                          </div>
-                        )}
-                        {showEMA21 && (
-                          <div className="flex justify-between items-center text-pink-300">
-                            <span>EMA 21:</span>
-                            <span>${maValues.ema21}</span>
-                          </div>
-                        )}
-                        {showEMA10 && (
-                          <div className="flex justify-between items-center text-cyan-300">
-                            <span>EMA 10:</span>
-                            <span>${maValues.ema10}</span>
-                          </div>
-                        )}
-                        {!showSMA200 && !showSMA50 && !showEMA21 && !showEMA10 && (
-                          <span className="text-slate-600 text-[10px] italic">Ninguna activa</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
                 </div>
+
+                {/* PANEL LATERAL DERECHO: Niveles Clave y Medias Móviles fuera de la pizarra de precios */}
+                <div className="w-48 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 flex flex-col justify-between space-y-3 shrink-0 backdrop-blur-sm">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Niveles Clave</h3>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex justify-between items-center bg-slate-950 p-1.5 rounded-lg border border-emerald-900/30">
+                        <span className="text-emerald-400 font-medium">Take Profit:</span>
+                        <span className="font-mono text-white">${formatCurrency(numTakeProfit)}</span>
+                      </div>
+                      <div className="flex justify-between items-center bg-slate-950 p-1.5 rounded-lg border border-blue-900/30">
+                        <span className="text-blue-400 font-medium">Entrada:</span>
+                        <span className="font-mono text-white">${formatCurrency(numEntryPrice)}</span>
+                      </div>
+                      <div className="flex justify-between items-center bg-slate-950 p-1.5 rounded-lg border border-rose-900/30">
+                        <span className="text-rose-400 font-medium">Stop Loss:</span>
+                        <span className="font-mono text-white">${formatCurrency(numStopLoss)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Medias Móviles</h3>
+                    <div className="space-y-1.5 text-xs font-mono">
+                      {showSMA200 && (
+                        <div className="flex justify-between items-center text-amber-300">
+                          <span>SMA 200:</span>
+                          <span>${maValues.sma200}</span>
+                        </div>
+                      )}
+                      {showSMA50 && (
+                        <div className="flex justify-between items-center text-blue-300">
+                          <span>SMA 50:</span>
+                          <span>${maValues.sma50}</span>
+                        </div>
+                      )}
+                      {showEMA21 && (
+                        <div className="flex justify-between items-center text-pink-300">
+                          <span>EMA 21:</span>
+                          <span>${maValues.ema21}</span>
+                        </div>
+                      )}
+                      {showEMA10 && (
+                        <div className="flex justify-between items-center text-cyan-300">
+                          <span>EMA 10:</span>
+                          <span>${maValues.ema10}</span>
+                        </div>
+                      )}
+                      {!showSMA200 && !showSMA50 && !showEMA21 && !showEMA10 && (
+                        <span className="text-slate-600 text-[10px] italic">Ninguna activa</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
               </div>
             </div>
 
