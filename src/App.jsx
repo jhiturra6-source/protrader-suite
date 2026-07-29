@@ -114,17 +114,17 @@ export default function App() {
     setter(val);
   };
 
-  // === CARGAR DATOS REALES DE YAHOO FINANCE ===
+  // === CARGAR DATOS REALES DESDE TU PROPIA API SERVERLESS ===
   useEffect(() => {
     const fetchRealData = async () => {
       setIsLoadingData(true);
       try {
-        const period1 = Math.floor(Date.now() / 1000) - 365 * 24 * 60 * 60; // 1 año atrás
-        const period2 = Math.floor(Date.now() / 1000);
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${currentTicker}?period1=${period1}&period2=${period2}&interval=1d`;
-        
-        const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+        // Al estar alojado en Vercel, llamas directamente a tu propia ruta /api
+        const response = await fetch(`/api/finance?symbol=${currentTicker}`);
         const json = await response.json();
+        
+        if (json.error) throw new Error(json.error);
+
         const result = json.chart.result[0];
         const timestamps = result.timestamp;
         const quotes = result.indicators.quote[0];
@@ -145,14 +145,13 @@ export default function App() {
 
         if (formattedData.length > 0) {
           setChartData(formattedData);
-          // Actualizar precio de entrada sugerido con el último cierre real
           const lastClose = formattedData[formattedData.length - 1].close;
           setEntryPrice(lastClose.toFixed(2).replace('.', ','));
           setStopLoss((lastClose * 0.97).toFixed(2).replace('.', ','));
           setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
         }
       } catch (error) {
-        console.error("Error al obtener datos reales, usando respaldo técnico", error);
+        console.error("Error al obtener datos reales:", error);
       } finally {
         setIsLoadingData(false);
       }
