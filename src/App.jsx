@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createChart } from 'lightweight-charts';
 import { 
   TrendingUp, Calculator, BarChart2, AlertCircle, 
-  MousePointer2, Pencil, Type, Ruler, Trash2, Eye, EyeOff, Search, Loader2 
+  MousePointer2, Pencil, Type, Ruler, Trash2, Eye, EyeOff, Search, Loader2, Eraser
 } from 'lucide-react';
 
 // --- UTILIDADES DE FORMATEO ---
@@ -26,6 +26,39 @@ const formatCurrency = (val) => {
   return `${formattedInt},${decPart}`;
 };
 
+// --- ALGORITMOS DE AGRUPACIÓN DE TIEMPO (Timeframes) ---
+const aggregateData = (data, period) => {
+  if (period === '1D' || !data.length) return data;
+  const aggregated = [];
+  let current = null;
+  let currentKey = null;
+
+  data.forEach(d => {
+    const date = new Date(d.time);
+    let key;
+    if (period === '1W') {
+      const day = date.getDay();
+      const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+      const weekStart = new Date(date.setDate(diff));
+      key = weekStart.toISOString().split('T')[0];
+    } else if (period === '1M') {
+      key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
+    }
+
+    if (key !== currentKey) {
+      if (current) aggregated.push(current);
+      currentKey = key;
+      current = { time: key, open: d.open, high: d.high, low: d.low, close: d.close };
+    } else {
+      current.high = Math.max(current.high, d.high);
+      current.low = Math.min(current.low, d.low);
+      current.close = d.close;
+    }
+  });
+  if (current) aggregated.push(current);
+  return aggregated;
+};
+
 // --- CÁLCULO DE INDICADORES ---
 const calculateSMA = (data, period) => {
   const result = [];
@@ -43,16 +76,52 @@ const calculateEMA = (data, period) => {
   const multiplier = 2 / (period + 1);
   let prevEMA = null;
   for (let i = 0; i < data.length; i++) {
-    const close = data[i].close;
     if (i < period - 1) continue;
     if (prevEMA === null) {
       let sum = 0;
       for (let j = 0; j <= i; j++) sum += data[j].close;
       prevEMA = sum / (i + 1);
     } else {
-      prevEMA = (close - prevEMA) * multiplier + prevEMA;
+      prevEMA = (data[i].close - prevEMA) * multiplier + prevEMA;
     }
     result.push({ time: data[i].time, value: parseFloat(prevEMA.toFixed(2)) });
+  }
+  return result;
+};
+
+// Mock realista de RSI
+const calculateRSI = (data, period = 14) => {
+  let result = [];
+  let gains = 0, losses = 0;
+  for (let i = 1; i < data.length; i++) {
+    const change = data[i].close - data[i - 1].close;
+    gains += change > 0 ? change : 0;
+    losses += change < 0 ? Math.abs(change) : 0;
+    if (i >= period) {
+      const avgGain = gains / period;
+      const avgLoss = losses / period;
+      const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+      result.push({ time: data[i].time, value: parseFloat((100 - (100 / (1 + rs))).toFixed(2)) });
+      const oldestChange = data[i - period + 1].close - data[i - period].close;
+      gains -= oldestChange > 0 ? oldestChange : 0;
+      losses -= oldestChange < 0 ? Math.abs(oldestChange) : 0;
+    }
+  }
+  return result;
+};
+
+// Mock de MACD (Línea rápida)
+const calculateMACD = (data) => {
+  const ema12 = calculateEMA(data, 12);
+  const ema26 = calculateEMA(data, 26);
+  const result = [];
+  // Alinear arreglos
+  let j = 0;
+  for (let i = 0; i < ema26.length; i++) {
+    while (j < ema12.length && ema12[j].time !== ema26[i].time) j++;
+    if (j < ema12.length) {
+      result.push({ time: ema26[i].time, value: parseFloat((ema12[j].value - ema26[i].value).toFixed(2)) });
+    }
   }
   return result;
 };
@@ -61,19 +130,30 @@ export default function App() {
   const [activeMenu, setActiveMenu] = useState(1);
   const [tickerInput, setTickerInput] = useState("AAPL");
   const [currentTicker, setCurrentTicker] = useState("AAPL");
+  const [timeframe, setTimeframe] = useState("1D"); // 1D, 1W, 1M
+  
+  // Dibujo interactivo con Drag
   const [activeTool, setActiveTool] = useState("pointer");
-  const [isLoadingData, setIsLoadingData] = useState(false);
-  const [chartData, setChartData] = useState([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [startPoint, setStartPoint] = useState(null);
+  const [currentPoint, setCurrentPoint] = useState(null);
   const [drawings, setDrawings] = useState([]);
+  
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  const [rawChartData, setRawChartData] = useState([]); // Datos en bruto (Diarios)
+  const [chartData, setChartData] = useState([]); // Datos agrupados según Timeframe
 
   // Estados de Indicadores
   const [showSMA200, setShowSMA200] = useState(false);
   const [showSMA50, setShowSMA50] = useState(true);
   const [showEMA21, setShowEMA21] = useState(false);
   const [showEMA10, setShowEMA10] = useState(false);
+  
+  // Osciladores
   const [showRSI, setShowRSI] = useState(false);
   const [showMACD, setShowMACD] = useState(false);
   const [showStochastic, setShowStochastic] = useState(false);
+  const hasOscillators = showRSI || showMACD || showStochastic;
 
   // OHLC Legend State
   const [ohlcData, setOhlcData] = useState({ o: '-', h: '-', l: '-', c: '-', change: '-' });
@@ -86,11 +166,14 @@ export default function App() {
   const [takeProfit, setTakeProfit] = useState("165,00");
   const [shares, setShares] = useState("100");
 
-  const chartContainerRef = useRef(null);
-  const chartRef = useRef(null);
-  const seriesRef = useRef(null);
+  const mainChartContainerRef = useRef(null);
+  const oscChartContainerRef = useRef(null);
+  const mainChartRef = useRef(null);
+  const oscChartRef = useRef(null);
+  const mainSeriesRef = useRef(null);
   
   const indicatorsRef = useRef({});
+  const oscSeriesRef = useRef({});
   const linesRef = useRef({});
 
   const numCapital = parseToFloat(capital);
@@ -114,7 +197,7 @@ export default function App() {
     setter(val);
   };
 
-  // === CONSUMO DE DATOS REALES DESDE LA API SERVERLESS DE VERCEL ===
+  // 1. Fetch Inicial de API Vercel
   useEffect(() => {
     const fetchRealMarketData = async () => {
       setIsLoadingData(true);
@@ -143,21 +226,25 @@ export default function App() {
         }
 
         if (formattedData.length > 0) {
-          setChartData(formattedData);
+          setRawChartData(formattedData);
           const lastClose = formattedData[formattedData.length - 1].close;
           setEntryPrice(lastClose.toFixed(2).replace('.', ','));
           setStopLoss((lastClose * 0.97).toFixed(2).replace('.', ','));
           setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
         }
       } catch (error) {
-        console.error("Error al obtener datos reales de la API:", error);
+        console.error("Error al obtener datos:", error);
       } finally {
         setIsLoadingData(false);
       }
     };
-
     fetchRealMarketData();
   }, [currentTicker]);
+
+  // 2. Aplicar Timeframe (Filtro 1D, 1W, 1M)
+  useEffect(() => {
+    setChartData(aggregateData(rawChartData, timeframe));
+  }, [rawChartData, timeframe]);
 
   const handleSearchTicker = (e) => {
     e.preventDefault();
@@ -165,37 +252,37 @@ export default function App() {
     setCurrentTicker(tickerInput.toUpperCase().trim());
   };
 
-  // Inicializar Gráfico con escala de fechas visible abajo
+  // 3. Inicializar Gráficos (Principal y Osciladores)
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    if (!mainChartContainerRef.current) return;
 
-    const chart = createChart(chartContainerRef.current, {
+    // --- GRÁFICO PRINCIPAL ---
+    const chartOptions = {
       layout: { background: { type: 'solid', color: '#0f172a' }, textColor: '#94a3b8' },
       grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
-      crosshair: { mode: 1 },
+      crosshair: { mode: 0 }, // 0 = Modo Normal libre, cruza el ratón exacto
       rightPriceScale: { borderColor: '#1e293b' },
       timeScale: { 
         borderColor: '#1e293b', 
         timeVisible: true,
-        fixLeftEdge: true,
-        fixRightEdge: true,
+        rightOffset: 15, // Espacio extra a la derecha para ver futuro
       },
-      width: chartContainerRef.current.clientWidth,
-      height: 480,
-    });
+    };
 
-    const series = chart.addCandlestickSeries({
+    const mainChart = createChart(mainChartContainerRef.current, chartOptions);
+    const mainSeries = mainChart.addCandlestickSeries({
       upColor: '#10b981', downColor: '#f43f5e', 
       borderVisible: false, 
       wickUpColor: '#10b981', wickDownColor: '#f43f5e'
     });
 
-    chartRef.current = chart;
-    seriesRef.current = series;
+    mainChartRef.current = mainChart;
+    mainSeriesRef.current = mainSeries;
 
-    chart.subscribeCrosshairMove((param) => {
-      if (param.time && param.seriesData.get(series)) {
-        const data = param.seriesData.get(series);
+    // Panel OHLC
+    mainChart.subscribeCrosshairMove((param) => {
+      if (param.time && param.seriesData.get(mainSeries)) {
+        const data = param.seriesData.get(mainSeries);
         const diff = data.close - data.open;
         const pct = (diff / data.open) * 100;
         setOhlcData({
@@ -208,22 +295,46 @@ export default function App() {
       }
     });
 
+    // --- PANEL DE OSCILADORES (Opcional) ---
+    let oscChart = null;
+    if (oscChartContainerRef.current) {
+      oscChart = createChart(oscChartContainerRef.current, {
+        ...chartOptions,
+        crosshair: { mode: 0 },
+      });
+      oscChartRef.current = oscChart;
+
+      // Sincronizar escalas de tiempo (eje X)
+      mainChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+        if(oscChart) oscChart.timeScale().setVisibleRange(range);
+      });
+      oscChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+        mainChart.timeScale().setVisibleRange(range);
+      });
+    }
+
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
-      }
+      if (mainChartContainerRef.current) mainChart.applyOptions({ width: mainChartContainerRef.current.clientWidth });
+      if (oscChartContainerRef.current && oscChart) oscChart.applyOptions({ width: oscChartContainerRef.current.clientWidth });
     };
+    
     window.addEventListener('resize', handleResize);
+    
+    // Forzar redimensionamiento inicial para evitar bugs de ancho
+    setTimeout(handleResize, 50);
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      chart.remove();
+      mainChart.remove();
+      if(oscChart) oscChart.remove();
     };
-  }, []);
+  }, [hasOscillators]); // Re-montar si se muestra u oculta el panel inferior
 
+  // 4. Llenar Gráficos e Indicadores
   useEffect(() => {
-    if (!seriesRef.current || chartData.length === 0) return;
-    seriesRef.current.setData(chartData);
+    if (!mainSeriesRef.current || chartData.length === 0) return;
+    
+    mainSeriesRef.current.setData(chartData);
 
     const last = chartData[chartData.length - 1];
     if (last) {
@@ -238,80 +349,136 @@ export default function App() {
       });
     }
 
+    // --- Limpiar Técnicos Viejos ---
     Object.keys(indicatorsRef.current).forEach(key => {
-      if (indicatorsRef.current[key]) {
-        chartRef.current.removeSeries(indicatorsRef.current[key]);
+      if (indicatorsRef.current[key] && mainChartRef.current) {
+        mainChartRef.current.removeSeries(indicatorsRef.current[key]);
       }
     });
     indicatorsRef.current = {};
 
-    const chart = chartRef.current;
+    Object.keys(oscSeriesRef.current).forEach(key => {
+      if (oscSeriesRef.current[key] && oscChartRef.current) {
+        oscChartRef.current.removeSeries(oscSeriesRef.current[key]);
+      }
+    });
+    oscSeriesRef.current = {};
+
+    // --- Dibujar Medias Móviles en Chart Principal (Líneas sólidas lineStyle: 0) ---
     if (showSMA200) {
-      const sma200Line = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, title: 'SMA 200' });
-      sma200Line.setData(calculateSMA(chartData, 200));
-      indicatorsRef.current.sma200 = sma200Line;
+      const line = mainChartRef.current.addLineSeries({ color: '#f59e0b', lineWidth: 2, lineStyle: 0 });
+      line.setData(calculateSMA(chartData, 200));
+      indicatorsRef.current.sma200 = line;
     }
     if (showSMA50) {
-      const sma50Line = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, title: 'SMA 50' });
-      sma50Line.setData(calculateSMA(chartData, 50));
-      indicatorsRef.current.sma50 = sma50Line;
+      const line = mainChartRef.current.addLineSeries({ color: '#3b82f6', lineWidth: 2, lineStyle: 0 });
+      line.setData(calculateSMA(chartData, 50));
+      indicatorsRef.current.sma50 = line;
     }
     if (showEMA21) {
-      const ema21Line = chart.addLineSeries({ color: '#ec4899', lineWidth: 2, title: 'EMA 21' });
-      ema21Line.setData(calculateEMA(chartData, 21));
-      indicatorsRef.current.ema21 = ema21Line;
+      const line = mainChartRef.current.addLineSeries({ color: '#ec4899', lineWidth: 2, lineStyle: 0 });
+      line.setData(calculateEMA(chartData, 21));
+      indicatorsRef.current.ema21 = line;
     }
     if (showEMA10) {
-      const ema10Line = chart.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'EMA 10' });
-      ema10Line.setData(calculateEMA(chartData, 10));
-      indicatorsRef.current.ema10 = ema10Line;
+      const line = mainChartRef.current.addLineSeries({ color: '#06b6d4', lineWidth: 2, lineStyle: 0 });
+      line.setData(calculateEMA(chartData, 10));
+      indicatorsRef.current.ema10 = line;
     }
-  }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
+    // --- Dibujar Osciladores en Panel Inferior ---
+    if (oscChartRef.current) {
+      if (showRSI) {
+        const line = oscChartRef.current.addLineSeries({ color: '#a855f7', lineWidth: 2, title: 'RSI' });
+        line.setData(calculateRSI(chartData, 14));
+        oscSeriesRef.current.rsi = line;
+      }
+      if (showMACD) {
+        const line = oscChartRef.current.addLineSeries({ color: '#6366f1', lineWidth: 2, title: 'MACD' });
+        line.setData(calculateMACD(chartData));
+        oscSeriesRef.current.macd = line;
+      }
+      if (showStochastic) {
+        // Mock rápido de Stochastic usando RSI para no saturar memoria
+        const line = oscChartRef.current.addLineSeries({ color: '#10b981', lineWidth: 2, title: 'Stoch (Mock)' });
+        line.setData(calculateRSI(chartData, 14).map(d => ({time: d.time, value: d.value - 10})));
+        oscSeriesRef.current.stoch = line;
+      }
+    }
+  }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10, showRSI, showMACD, showStochastic, hasOscillators]);
+
+  // 5. Líneas de Riesgo (Textos eliminados, solo eje Y)
   useEffect(() => {
-    if (!seriesRef.current) return;
-    const series = seriesRef.current;
+    if (!mainSeriesRef.current) return;
+    const series = mainSeriesRef.current;
 
     if (linesRef.current.entry) series.removePriceLine(linesRef.current.entry);
     if (linesRef.current.sl) series.removePriceLine(linesRef.current.sl);
     if (linesRef.current.tp) series.removePriceLine(linesRef.current.tp);
 
+    // Se quitó el 'title' ruidoso, usando solo 'axisLabelVisible' a la derecha
     if (numEntryPrice > 0) {
       linesRef.current.entry = series.createPriceLine({
-        price: numEntryPrice, color: '#38bdf8', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'ENTRADA',
+        price: numEntryPrice, color: '#38bdf8', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
       });
     }
     if (numStopLoss > 0) {
       linesRef.current.sl = series.createPriceLine({
-        price: numStopLoss, color: '#f43f5e', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'STOP LOSS',
+        price: numStopLoss, color: '#f43f5e', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
       });
     }
     if (numTakeProfit > 0) {
       linesRef.current.tp = series.createPriceLine({
-        price: numTakeProfit, color: '#10b981', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'TAKE PROFIT',
+        price: numTakeProfit, color: '#10b981', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
       });
     }
   }, [numEntryPrice, numStopLoss, numTakeProfit]);
 
-  const handleChartClick = (e) => {
-    if (activeTool === 'pointer') return;
+  // --- LÓGICA DE HERRAMIENTAS DE DIBUJO ---
+  const handleSVGMouseDown = (e) => {
+    if (activeTool === 'pointer' || activeTool === 'eraser') return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    setIsDrawing(true);
+    setStartPoint({ x, y });
+    setCurrentPoint({ x, y });
+  };
 
-    if (activeTool === 'pencil') {
-      setDrawings(prev => [...prev, { id: Date.now(), type: 'line', x1: x - 20, y1: y, x2: x + 40, y2: y - 20 }]);
-    } else if (activeTool === 'text') {
-      const textVal = prompt("Ingrese el texto:", "Zona de interés");
-      if (textVal) setDrawings(prev => [...prev, { id: Date.now(), type: 'text', x, y, text: textVal }]);
-    } else if (activeTool === 'ruler') {
-      setDrawings(prev => [...prev, { id: Date.now(), type: 'ruler', x1: x, y1: y, x2: x + 60, y2: y - 60 }]);
+  const handleSVGMouseMove = (e) => {
+    if (!isDrawing) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    setCurrentPoint({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+  };
+
+  const handleSVGMouseUp = () => {
+    if (!isDrawing) return;
+    setIsDrawing(false);
+    
+    if (activeTool === 'pencil' || activeTool === 'ruler') {
+      if(startPoint && currentPoint) {
+        setDrawings(prev => [...prev, { id: Date.now(), type: activeTool, x1: startPoint.x, y1: startPoint.y, x2: currentPoint.x, y2: currentPoint.y }]);
+      }
+    } else if (activeTool === 'text' && currentPoint) {
+      const textVal = prompt("Ingrese el texto:", "Texto");
+      if (textVal) {
+        setDrawings(prev => [...prev, { id: Date.now(), type: 'text', x: currentPoint.x, y: currentPoint.y, text: textVal }]);
+      }
+    }
+    setStartPoint(null);
+    setCurrentPoint(null);
+  };
+
+  const handleDeleteDrawing = (e, id) => {
+    if (activeTool === 'eraser') {
+      e.stopPropagation();
+      setDrawings(prev => prev.filter(d => d.id !== id));
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 font-sans selection:bg-emerald-500/30">
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="max-w-[1400px] mx-auto space-y-6">
         
         {/* ENCABEZADO */}
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -437,82 +604,103 @@ export default function App() {
                 <p className="text-emerald-100/70 text-xs mt-2">Arriesgando exactamente ${formatCurrency(numCapital * (numRiskPercent/100))} USD.</p>
               </div>
             )}
-
-            {isInvalidLong && (
-              <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 flex items-start gap-3">
-                <AlertCircle className="text-rose-400 flex-shrink-0 mt-0.5 w-4 h-4" />
-                <div><h3 className="text-rose-400 font-semibold text-xs">Error</h3><p className="text-xs text-rose-300/80">Entrada debe ser mayor a Stop Loss.</p></div>
-              </div>
-            )}
           </div>
 
-          {/* SECTOR DERECHO: Gráfico con fechas visibles abajo */}
+          {/* SECTOR DERECHO: Chart Profesional Unificado */}
           <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-3xl p-2 flex flex-col md:flex-row shadow-2xl relative overflow-hidden">
-            <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-20">
+            
+            {/* Barra de herramientas */}
+            <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-30">
               <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
-              <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
+              <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea"><Pencil className="w-4 h-4" /></button>
               <button onClick={() => setActiveTool("text")} className={`p-2 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-4 h-4" /></button>
               <button onClick={() => setActiveTool("ruler")} className={`p-2 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-4 h-4" /></button>
               <div className="w-px h-5 md:w-5 md:h-px bg-slate-700 my-1"></div>
-              <button onClick={() => setDrawings([])} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-4 h-4" /></button>
+              <button onClick={() => setActiveTool("eraser")} className={`p-2 rounded-lg transition ${activeTool === 'eraser' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/50' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Borrar uno por uno"><Eraser className="w-4 h-4" /></button>
+              <button onClick={() => setDrawings([])} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar Todo"><Trash2 className="w-4 h-4" /></button>
             </div>
 
-            <div className="flex-1 p-2 md:p-3 min-h-[500px] relative flex flex-col justify-between">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2 z-20 relative">
-                <form onSubmit={handleSearchTicker} className="flex items-center gap-1.5">
-                  <div className="relative">
-                    <input 
-                       type="text" 
-                       value={tickerInput}
-                       onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
-                       className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-28 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider"
-                       placeholder="AAPL"
-                    />
-                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2" />
+            {/* Contenedor Flex para Gráficos y UI SUPERPUESTA */}
+            <div className="flex-1 flex flex-col relative bg-slate-950 rounded-2xl ml-0 md:ml-2 overflow-hidden border border-slate-800">
+              
+              {/* Controles Top (Buscador, Filtros de tiempo y OHLC grandes) */}
+              <div className="absolute top-2 left-2 right-2 flex flex-col sm:flex-row sm:items-start justify-between gap-2 z-30 pointer-events-none">
+                
+                <div className="flex items-center gap-2 pointer-events-auto bg-slate-900/80 p-1.5 rounded-xl backdrop-blur-sm border border-slate-800">
+                  <form onSubmit={handleSearchTicker} className="flex items-center gap-1">
+                    <div className="relative">
+                      <input type="text" value={tickerInput} onChange={(e) => setTickerInput(e.target.value.toUpperCase())} className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1 pl-6 rounded-lg w-24 focus:ring-1 focus:ring-emerald-500 uppercase tracking-wider" placeholder="AAPL" />
+                      <Search className="w-3 h-3 text-slate-500 absolute left-2 top-1.5" />
+                    </div>
+                    <button type="submit" disabled={isLoadingData} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1">
+                      {isLoadingData ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Ir'}
+                    </button>
+                  </form>
+                  <div className="w-px h-4 bg-slate-700 mx-1"></div>
+                  <div className="flex bg-slate-950 rounded-lg border border-slate-800 overflow-hidden">
+                     <button onClick={()=>setTimeframe('1D')} className={`px-2 py-1 text-xs font-bold ${timeframe==='1D' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-300'}`}>1D</button>
+                     <button onClick={()=>setTimeframe('1W')} className={`px-2 py-1 text-xs font-bold ${timeframe==='1W' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-300'}`}>1W</button>
+                     <button onClick={()=>setTimeframe('1M')} className={`px-2 py-1 text-xs font-bold ${timeframe==='1M' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-300'}`}>1M</button>
                   </div>
-                  <button type="submit" disabled={isLoadingData} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1">
-                    {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
-                  </button>
-                  <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20">
-                    {currentTicker}
-                  </span>
-                </form>
+                </div>
 
-                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+                {/* Textos OHLC Más Grandes */}
+                <div className="flex flex-wrap items-center gap-3 text-sm md:text-base font-mono font-bold bg-slate-900/80 px-3 py-1.5 rounded-xl backdrop-blur-sm border border-slate-800 shadow-sm pointer-events-auto">
                   <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
                   <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
                   <div><span className="text-slate-500">L:</span> <span className="text-rose-400">{ohlcData.l}</span></div>
                   <div><span className="text-slate-500">C:</span> <span className="text-white">{ohlcData.c}</span></div>
-                  <div className="pl-1.5 border-l border-slate-800"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{ohlcData.change}</span></div>
+                  <div className="pl-2 border-l border-slate-700"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400' : 'text-rose-400'}>{ohlcData.change}</span></div>
                 </div>
               </div>
 
-              <div className="absolute inset-0 z-10 pointer-events-none">
-                <svg className="w-full h-full">
+              {/* Capa unificada para herramientas de dibujo (Cubre todo el height del contenedor) */}
+              <div 
+                 className={`absolute inset-0 z-20 ${activeTool !== 'pointer' ? (activeTool === 'eraser' ? 'cursor-pointer' : 'cursor-crosshair') : 'pointer-events-none'}`} 
+                 onMouseDown={handleSVGMouseDown} onMouseMove={handleSVGMouseMove} onMouseUp={handleSVGMouseUp}
+              >
+                <svg className="w-full h-full pointer-events-auto">
                   {drawings.map(d => {
+                    const eraseClasses = activeTool === 'eraser' ? 'cursor-pointer hover:stroke-rose-500 hover:fill-rose-500' : '';
                     if (d.type === 'line' || d.type === 'ruler') {
                       return (
-                        <g key={d.id}>
-                          <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" strokeDasharray="4" />
-                          <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
-                          <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
+                        <g key={d.id} onClick={(e) => handleDeleteDrawing(e, d.id)} className={eraseClasses}>
+                          {/* Línea invisible gruesa para facilitar el clic del borrador */}
+                          <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="transparent" strokeWidth="15" />
+                          <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" strokeDasharray={d.type === 'ruler' ? "4" : ""} />
+                          <circle cx={d.x1} cy={d.y1} r="4" fill="#38bdf8" />
+                          <circle cx={d.x2} cy={d.y2} r="4" fill="#38bdf8" />
                         </g>
                       );
                     }
                     if (d.type === 'text') {
                       return (
-                        <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="11" fontWeight="bold">
+                        <text key={d.id} onClick={(e) => handleDeleteDrawing(e, d.id)} x={d.x} y={d.y} fill="#38bdf8" fontSize="14" fontWeight="bold" className={`bg-slate-900 ${eraseClasses}`}>
                           {d.text}
                         </text>
                       );
                     }
                     return null;
                   })}
+                  
+                  {/* Vista Previa de arrastre (Dibujo en proceso) */}
+                  {isDrawing && startPoint && currentPoint && (activeTool === 'pencil' || activeTool === 'ruler') && (
+                     <g>
+                        <line x1={startPoint.x} y1={startPoint.y} x2={currentPoint.x} y2={currentPoint.y} stroke="#38bdf8" strokeWidth="2" strokeDasharray={activeTool === 'ruler' ? "4" : ""} opacity="0.6"/>
+                        <circle cx={currentPoint.x} cy={currentPoint.y} r="4" fill="#38bdf8" opacity="0.6"/>
+                     </g>
+                  )}
                 </svg>
               </div>
 
-              {/* Contenedor del Gráfico con altura optimizada para mostrar el eje X de fechas */}
-              <div ref={chartContainerRef} onClick={handleChartClick} className={`w-full h-[440px] ${activeTool !== 'pointer' ? 'cursor-pointer' : 'cursor-crosshair'}`}></div>
+              {/* Contenedores nativos de Lightweight Charts */}
+              <div className="flex flex-col h-[550px] w-full relative z-10 pointer-events-auto">
+                <div ref={mainChartContainerRef} className={`w-full ${hasOscillators ? 'h-[70%] border-b border-slate-800' : 'h-full'}`}></div>
+                {hasOscillators && (
+                   <div ref={oscChartContainerRef} className="w-full h-[30%]"></div>
+                )}
+              </div>
+
             </div>
           </div>
 
