@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createChart, LineStyle } from 'lightweight-charts';
 import { 
   TrendingUp, Calculator, BarChart2, AlertCircle, 
-  MousePointer2, Pencil, Type, Ruler, Trash2, Eye, EyeOff, Search, Loader2 
+  MousePointer2, Pencil, Type, Ruler, Trash2, Search, Loader2 
 } from 'lucide-react';
 
 // --- UTILIDADES DE FORMATEO ---
@@ -114,6 +114,14 @@ export default function App() {
     setter(val);
   };
 
+  // --- ESTA ES LA FUNCIÓN QUE FALTABA ---
+  const handleSearchTicker = (e) => {
+    e.preventDefault();
+    if (!tickerInput.trim()) return;
+    setCurrentTicker(tickerInput.toUpperCase().trim());
+  };
+  // --------------------------------------
+
   useEffect(() => {
     const fetchRealMarketData = async () => {
       setIsLoadingData(true);
@@ -172,11 +180,11 @@ export default function App() {
       rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.1, bottom: 0.1 } },
       timeScale: { 
         borderColor: '#1e293b', 
-        timeVisible: true, // Esto muestra las fechas nativamente, es vital no sobreescribirlo ni taparlo con CSS
+        timeVisible: true, 
         rightOffset: 12,
       },
       width: chartContainerRef.current.clientWidth,
-      height: 500, // Ajustado a 500 para mayor visibilidad
+      height: 500, 
     });
 
     const series = chart.addCandlestickSeries({
@@ -243,7 +251,6 @@ export default function App() {
     };
   }, [currentTicker]);
 
-  // Actualizar datos de gráfico y sincronización segura de medias móviles
   useEffect(() => {
     if (!seriesRef.current || chartData.length === 0 || !chartRef.current) return;
     const chart = chartRef.current;
@@ -369,7 +376,7 @@ export default function App() {
         {/* DISTRIBUCIÓN PRINCIPAL */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
-          {/* SECTOR IZQUIERDO: Achicado a col-span-3 */}
+          {/* SECTOR IZQUIERDO */}
           <div className="lg:col-span-3 space-y-4">
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
               <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Parámetros de Riesgo</h2>
@@ -439,7 +446,7 @@ export default function App() {
             )}
           </div>
 
-          {/* SECTOR DERECHO: Expandido a col-span-9 */}
+          {/* SECTOR DERECHO */}
           <div className="lg:col-span-9 bg-slate-950 border border-slate-800/80 rounded-3xl p-3 shadow-2xl relative flex flex-col">
             
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-3 py-2.5 mb-2 bg-slate-900/40 border border-slate-800/60 rounded-2xl z-20">
@@ -459,7 +466,6 @@ export default function App() {
                 </button>
               </form>
 
-              {/* Botones de Medias Móviles */}
               <div className="flex flex-wrap items-center gap-1.5">
                 <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 200</button>
                 <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 50</button>
@@ -469,7 +475,6 @@ export default function App() {
             </div>
 
             <div className="flex flex-col md:flex-row relative">
-              {/* Barra de herramientas */}
               <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800/60 bg-slate-900/30 items-center justify-start z-20">
                 <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
                 <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
@@ -480,7 +485,6 @@ export default function App() {
               </div>
 
               <div className="flex-1 p-1 relative flex gap-3">
-                {/* Contenedor del gráfico sin recorte para que se vean las fechas */}
                 <div className="flex-1 relative">
                   <div 
                     ref={chartContainerRef} 
@@ -489,7 +493,6 @@ export default function App() {
                     onMouseMove={handleMouseMove}
                     className="w-full h-full min-h-[500px] cursor-crosshair relative"
                   >
-                    {/* Tooltip con MAs integradas */}
                     {tooltipData && (
                       <div 
                         style={{ 
@@ -519,7 +522,6 @@ export default function App() {
                           {tooltipData.change}
                         </div>
                         
-                        {/* Renderizar dinámicamente las MAs habilitadas dentro del tooltip */}
                         {(showSMA200 || showSMA50 || showEMA21 || showEMA10) && (
                           <div className="mt-1.5 pt-1.5 border-t border-slate-800 space-y-0.5">
                             {showSMA200 && <div className="flex justify-between text-amber-300"><span>SMA 200:</span> <span>{tooltipData.ma.sma200}</span></div>}
@@ -532,7 +534,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* SVG Dibujos Interactivos */}
                   <div className="absolute inset-0 z-10 pointer-events-none">
                     <svg className="w-full h-full overflow-visible">
                       <defs>
@@ -585,7 +586,6 @@ export default function App() {
                     </svg>
                   </div>
 
-                  {/* Contenedor de Botones Flotantes de Eliminación Individual */}
                   <div className="absolute inset-0 z-20 pointer-events-none">
                     {drawings.map(d => {
                       const cx = d.type === 'text' ? d.x - 10 : (d.x1 + d.x2) / 2;
@@ -605,7 +605,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* PANEL LATERAL DERECHO: Exclusivo Niveles Clave */}
                 <div className="w-40 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 flex flex-col justify-start shrink-0 backdrop-blur-sm">
                   <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Niveles Clave</h3>
                   <div className="space-y-2 text-xs">
