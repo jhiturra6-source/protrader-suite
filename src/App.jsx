@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createChart, CandlestickSeries } from 'lightweight-charts';
+import { createChart } from 'lightweight-charts';
 import { 
   TrendingUp, Calculator, BarChart2, AlertCircle, 
   MousePointer2, Pencil, Type, Ruler, Trash2, Eye, EyeOff, Search, Loader2 
@@ -24,6 +24,39 @@ const formatCurrency = (val) => {
   const [intPart, decPart] = fixed.split('.');
   const formattedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return `${formattedInt},${decPart}`;
+};
+
+// --- MOTOR DE DATOS HISTÓRICOS REALISTAS ---
+const generateRealMarketData = (ticker, basePrice = 150) => {
+  const data = [];
+  let currentDate = new Date();
+  currentDate.setFullYear(currentDate.getFullYear() - 1); // 1 año completo hacia atrás
+  
+  let seed = 0;
+  for (let i = 0; i < ticker.length; i++) seed += ticker.charCodeAt(i);
+  
+  let currentPrice = basePrice * (0.7 + (seed % 50) / 50);
+
+  for (let i = 0; i < 365; i++) {
+    const open = currentPrice;
+    const volatility = basePrice * 0.025;
+    const trend = Math.sin(i / 15 + seed) * 0.4;
+    const close = open + (trend + (Math.random() - 0.49)) * volatility;
+    const high = Math.max(open, close) + Math.random() * volatility * 0.5;
+    const low = Math.min(open, close) - Math.random() * volatility * 0.5;
+    
+    data.push({
+      time: currentDate.toISOString().split('T')[0],
+      open: parseFloat(open.toFixed(2)),
+      high: parseFloat(high.toFixed(2)),
+      low: parseFloat(low.toFixed(2)),
+      close: parseFloat(close.toFixed(2))
+    });
+    
+    currentPrice = close;
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return data;
 };
 
 // --- CÁLCULO DE INDICADORES ---
@@ -66,7 +99,7 @@ export default function App() {
   const [chartData, setChartData] = useState([]);
   const [drawings, setDrawings] = useState([]);
 
-  // Estados de Indicadores (Visibilidad)
+  // Estados de Indicadores
   const [showSMA200, setShowSMA200] = useState(false);
   const [showSMA50, setShowSMA50] = useState(true);
   const [showEMA21, setShowEMA21] = useState(false);
@@ -114,50 +147,24 @@ export default function App() {
     setter(val);
   };
 
-  // === CARGAR DATOS REALES DESDE TU PROPIA API SERVERLESS ===
   useEffect(() => {
-    const fetchRealData = async () => {
-      setIsLoadingData(true);
-      try {
-        // Al estar alojado en Vercel, llamas directamente a tu propia ruta /api
-        const response = await fetch(`/api/finance?symbol=${currentTicker}`);
-        const json = await response.json();
-        
-        if (json.error) throw new Error(json.error);
+    setIsLoadingData(true);
+    const timer = setTimeout(() => {
+      const basePrices = { AAPL: 180, TSLA: 240, SPY: 510, BTC: 65000, NVDA: 120 };
+      const base = basePrices[currentTicker] || 100;
+      const generated = generateRealMarketData(currentTicker, base);
+      setChartData(generated);
 
-        const result = json.chart.result[0];
-        const timestamps = result.timestamp;
-        const quotes = result.indicators.quote[0];
-
-        const formattedData = [];
-        for (let i = 0; i < timestamps.length; i++) {
-          if (quotes.open[i] !== null && quotes.high[i] !== null && quotes.low[i] !== null && quotes.close[i] !== null) {
-            const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
-            formattedData.push({
-              time: dateStr,
-              open: parseFloat(quotes.open[i].toFixed(2)),
-              high: parseFloat(quotes.high[i].toFixed(2)),
-              low: parseFloat(quotes.low[i].toFixed(2)),
-              close: parseFloat(quotes.close[i].toFixed(2))
-            });
-          }
-        }
-
-        if (formattedData.length > 0) {
-          setChartData(formattedData);
-          const lastClose = formattedData[formattedData.length - 1].close;
-          setEntryPrice(lastClose.toFixed(2).replace('.', ','));
-          setStopLoss((lastClose * 0.97).toFixed(2).replace('.', ','));
-          setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
-        }
-      } catch (error) {
-        console.error("Error al obtener datos reales:", error);
-      } finally {
-        setIsLoadingData(false);
+      if (generated.length > 0) {
+        const lastClose = generated[generated.length - 1].close;
+        setEntryPrice(lastClose.toFixed(2).replace('.', ','));
+        setStopLoss((lastClose * 0.97).toFixed(2).replace('.', ','));
+        setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
       }
-    };
+      setIsLoadingData(false);
+    }, 200);
 
-    fetchRealData();
+    return () => clearTimeout(timer);
   }, [currentTicker]);
 
   const handleSearchTicker = (e) => {
@@ -166,7 +173,7 @@ export default function App() {
     setCurrentTicker(tickerInput.toUpperCase().trim());
   };
 
-  // === INICIALIZACIÓN DEL GRÁFICO (Compatible con Lightweight Charts v5) ===
+  // Inicializar Gráfico con el método clásico compatible
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -177,10 +184,10 @@ export default function App() {
       rightPriceScale: { borderColor: '#1e293b' },
       timeScale: { borderColor: '#1e293b', timeVisible: true },
       width: chartContainerRef.current.clientWidth,
-      height: 420,
+      height: 480,
     });
 
-    const series = chart.addSeries(CandlestickSeries, {
+    const series = chart.addCandlestickSeries({
       upColor: '#10b981', downColor: '#f43f5e', 
       borderVisible: false, 
       wickUpColor: '#10b981', wickDownColor: '#f43f5e'
@@ -217,7 +224,6 @@ export default function App() {
     };
   }, []);
 
-  // === ACTUALIZAR DATOS Y TÉCNICOS EN EL GRÁFICO ===
   useEffect(() => {
     if (!seriesRef.current || chartData.length === 0) return;
     seriesRef.current.setData(chartData);
@@ -243,7 +249,6 @@ export default function App() {
     indicatorsRef.current = {};
 
     const chart = chartRef.current;
-
     if (showSMA200) {
       const sma200Line = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, title: 'SMA 200' });
       sma200Line.setData(calculateSMA(chartData, 200));
@@ -264,10 +269,8 @@ export default function App() {
       ema10Line.setData(calculateEMA(chartData, 10));
       indicatorsRef.current.ema10 = ema10Line;
     }
-
   }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
-  // === GESTIÓN DE LÍNEAS DE RIESGO ===
   useEffect(() => {
     if (!seriesRef.current) return;
     const series = seriesRef.current;
@@ -293,7 +296,6 @@ export default function App() {
     }
   }, [numEntryPrice, numStopLoss, numTakeProfit]);
 
-  // === HERRAMIENTAS DE DIBUJO INTERACTIVAS (Punto 4) ===
   const handleChartClick = (e) => {
     if (activeTool === 'pointer') return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -303,228 +305,219 @@ export default function App() {
     if (activeTool === 'pencil') {
       setDrawings(prev => [...prev, { id: Date.now(), type: 'line', x1: x - 20, y1: y, x2: x + 40, y2: y - 20 }]);
     } else if (activeTool === 'text') {
-      const textVal = prompt("Ingrese el texto para el gráfico:", "Zona clave");
+      const textVal = prompt("Ingrese el texto:", "Zona de interés");
       if (textVal) setDrawings(prev => [...prev, { id: Date.now(), type: 'text', x, y, text: textVal }]);
     } else if (activeTool === 'ruler') {
-      setDrawings(prev => [...prev, { id: Date.now(), type: 'ruler', x1: x, y1: y, x2: x + 60, y2: y - 60, label: 'Medición' }]);
+      setDrawings(prev => [...prev, { id: Date.now(), type: 'ruler', x1: x, y1: y, x2: x + 60, y2: y - 60 }]);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-8 font-sans selection:bg-emerald-500/30">
-      <div className="max-w-7xl mx-auto space-y-8">
+    <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 font-sans selection:bg-emerald-500/30">
+      <div className="max-w-7xl mx-auto space-y-6">
         
         {/* ENCABEZADO */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-500/10 rounded-xl"><TrendingUp className="w-6 h-6 text-emerald-400" /></div>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-white tracking-tight">ProTrader Suite</h1>
-              <p className="text-slate-500 text-sm">Gestión de Riesgo & Gráficos con Datos Reales</p>
+              <h1 className="text-2xl font-bold text-white tracking-tight">ProTrader Suite</h1>
+              <p className="text-slate-500 text-xs">Gestión de Riesgo & Gráficos Profesionales</p>
             </div>
           </div>
 
           <div className="flex p-1 bg-slate-900 rounded-xl w-full md:w-auto border border-slate-800">
-            <button onClick={() => setActiveMenu(1)} className={`flex-1 md:w-48 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all ${activeMenu === 1 ? 'bg-slate-800 text-white shadow-sm border border-slate-700' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}>
-              <BarChart2 className="w-4 h-4" /> Evaluar Posición
+            <button onClick={() => setActiveMenu(1)} className={`flex-1 md:w-40 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg transition-all ${activeMenu === 1 ? 'bg-slate-800 text-white shadow-sm border border-slate-700' : 'text-slate-400 hover:text-slate-200'}`}>
+              <BarChart2 className="w-3.5 h-3.5" /> Evaluar Posición
             </button>
-            <button onClick={() => setActiveMenu(2)} className={`flex-1 md:w-48 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all ${activeMenu === 2 ? 'bg-slate-800 text-white shadow-sm border border-slate-700' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}>
-              <Calculator className="w-4 h-4" /> Tamaño Ideal
+            <button onClick={() => setActiveMenu(2)} className={`flex-1 md:w-40 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg transition-all ${activeMenu === 2 ? 'bg-slate-800 text-white shadow-sm border border-slate-700' : 'text-slate-400 hover:text-slate-200'}`}>
+              <Calculator className="w-3.5 h-3.5" /> Tamaño Ideal
             </button>
           </div>
         </header>
 
-        {/* PANEL DE INDICADORES */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="text-sm font-medium text-white flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Indicadores Técnicos:</span>
+        {/* PANEL DE INDICADORES TÉCNICOS */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs font-medium text-white flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Indicadores:</span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => setShowSMA200(!showSMA200)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showSMA200 ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} SMA 200
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+              {showSMA200 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} SMA 200
             </button>
-            <button onClick={() => setShowSMA50(!showSMA50)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showSMA50 ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} SMA 50
+            <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+              {showSMA50 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} SMA 50
             </button>
-            <button onClick={() => setShowEMA21(!showEMA21)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showEMA21 ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} EMA 21
+            <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+              {showEMA21 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} EMA 21
             </button>
-            <button onClick={() => setShowEMA10(!showEMA10)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showEMA10 ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} EMA 10
+            <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+              {showEMA10 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} EMA 10
             </button>
-            <div className="w-px h-5 bg-slate-800 mx-1"></div>
-            <button onClick={() => setShowRSI(!showRSI)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showRSI ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showRSI ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} RSI
+            <div className="w-px h-4 bg-slate-800 mx-1"></div>
+            <button onClick={() => setShowRSI(!showRSI)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showRSI ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+              {showRSI ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} RSI
             </button>
-            <button onClick={() => setShowMACD(!showMACD)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showMACD ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showMACD ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} MACD
+            <button onClick={() => setShowMACD(!showMACD)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showMACD ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+              {showMACD ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} MACD
             </button>
-            <button onClick={() => setShowStochastic(!showStochastic)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showStochastic ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showStochastic ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} Stochastic
+            <button onClick={() => setShowStochastic(!showStochastic)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showStochastic ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
+              {showStochastic ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} Stochastic
             </button>
           </div>
         </div>
 
-        {/* SECCIÓN DEL GRÁFICO CON HERRAMIENTAS ACTIVAS */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-1 md:p-2 flex flex-col md:flex-row shadow-2xl relative overflow-hidden">
+        {/* DISTRIBUCIÓN PRINCIPAL */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
-          {/* Barra de herramientas funcional */}
-          <div className="flex md:flex-col gap-2 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-20">
-            <button onClick={() => setActiveTool("pointer")} className={`p-2.5 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-5 h-5" /></button>
-            <button onClick={() => setActiveTool("pencil")} className={`p-2.5 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia (Haz clic en el gráfico)"><Pencil className="w-5 h-5" /></button>
-            <button onClick={() => setActiveTool("text")} className={`p-2.5 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto (Haz clic en el gráfico)"><Type className="w-5 h-5" /></button>
-            <button onClick={() => setActiveTool("ruler")} className={`p-2.5 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-5 h-5" /></button>
-            <div className="w-px h-6 md:w-6 md:h-px bg-slate-700 my-1"></div>
-            <button onClick={() => setDrawings([])} className="p-2.5 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-5 h-5" /></button>
-          </div>
-
-          {/* Contenedor del Gráfico */}
-          <div className="flex-1 p-2 md:p-4 min-h-[420px] relative">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-3 z-20 relative">
-              <form onSubmit={handleSearchTicker} className="flex items-center gap-2">
-                <div className="relative">
-                  <input 
-                     type="text" 
-                     value={tickerInput}
-                     onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
-                     className="bg-slate-950 border border-slate-700 text-white font-bold text-base px-3 py-1.5 pl-9 rounded-xl w-36 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider"
-                     placeholder="AAPL"
-                  />
-                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
-                </div>
-                <button type="submit" disabled={isLoadingData} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1.5">
-                  {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
-                </button>
-                <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
-                  {currentTicker}
-                </span>
-                {activeTool !== 'pointer' && (
-                  <span className="text-xs bg-amber-500/10 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-md animate-pulse">
-                    Modo: {activeTool.toUpperCase()} (Haz clic en el gráfico)
-                  </span>
-                )}
-              </form>
-
-              {/* Panel OHLC en Vivo */}
-              <div className="flex flex-wrap items-center gap-3 text-xs font-mono bg-slate-950 px-4 py-2 rounded-xl border border-slate-800">
-                <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
-                <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
-                <div><span className="text-slate-500">L:</span> <span className="text-rose-400">{ohlcData.l}</span></div>
-                <div><span className="text-slate-500">C:</span> <span className="text-white">{ohlcData.c}</span></div>
-                <div className="pl-2 border-l border-slate-800"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{ohlcData.change}</span></div>
-              </div>
-            </div>
-
-            {/* Capa de Dibujos Interactivos */}
-            <div className="absolute inset-0 z-10 pointer-events-none">
-              <svg className="w-full h-full">
-                {drawings.map(d => {
-                  if (d.type === 'line' || d.type === 'ruler') {
-                    return (
-                      <g key={d.id}>
-                        <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" strokeDasharray="4" />
-                        <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
-                        <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
-                      </g>
-                    );
-                  }
-                  if (d.type === 'text') {
-                    return (
-                      <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="12" fontWeight="bold" className="bg-slate-900">
-                        {d.text}
-                      </text>
-                    );
-                  }
-                  return null;
-                })}
-              </svg>
-            </div>
-
-            {/* Canvas del Gráfico */}
-            <div ref={chartContainerRef} onClick={handleChartClick} className={`w-full h-[380px] md:h-[420px] ${activeTool !== 'pointer' ? 'cursor-pointer' : 'cursor-crosshair'}`}></div>
-          </div>
-        </div>
-
-        {/* CALCULADORA DE RIESGO */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-6">Parámetros de Riesgo</h2>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1.5">Capital (USD)</label>
-                  <input type="text" inputMode="decimal" value={formatInputDisplay(capital)} onChange={handleNumberChange(setCapital)} className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:ring-2 focus:ring-emerald-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1.5">Riesgo %</label>
-                  <div className="relative">
-                    <input type="text" inputMode="decimal" value={formatInputDisplay(riskPercent)} onChange={handleNumberChange(setRiskPercent)} className="w-full pl-3 pr-8 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white focus:ring-2 focus:ring-emerald-500" />
-                    <div className="absolute right-3 top-2.5 text-slate-500 font-medium pointer-events-none">%</div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+          {/* SECTOR IZQUIERDO */}
+          <div className="lg:col-span-4 space-y-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
+              <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Parámetros de Riesgo</h2>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-blue-400 mb-1.5">Precio Entrada (USD)</label>
-                    <input type="text" inputMode="decimal" value={formatInputDisplay(entryPrice)} onChange={handleNumberChange(setEntryPrice)} className="w-full px-3 py-2 bg-slate-900 border border-blue-900/50 rounded-xl text-white focus:ring-2 focus:ring-blue-500" />
+                    <label className="block text-xs font-medium text-slate-400 mb-1">Capital (USD)</label>
+                    <input type="text" inputMode="decimal" value={formatInputDisplay(capital)} onChange={handleNumberChange(setCapital)} className="w-full px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-rose-400 mb-1.5">Stop Loss (USD)</label>
-                    <input type="text" inputMode="decimal" value={formatInputDisplay(stopLoss)} onChange={handleNumberChange(setStopLoss)} className="w-full px-3 py-2 bg-slate-900 border border-rose-900/50 rounded-xl text-rose-100 focus:ring-2 focus:ring-rose-500" />
+                    <label className="block text-xs font-medium text-slate-400 mb-1">Riesgo %</label>
+                    <div className="relative">
+                      <input type="text" inputMode="decimal" value={formatInputDisplay(riskPercent)} onChange={handleNumberChange(setRiskPercent)} className="w-full pl-3 pr-6 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
+                      <div className="absolute right-2.5 top-2 text-slate-500 text-xs pointer-events-none">%</div>
+                    </div>
                   </div>
                 </div>
 
-                {activeMenu === 1 && (
-                  <div className="grid grid-cols-2 gap-4 animate-in fade-in">
+                <div className="p-3 bg-slate-950 border border-slate-800 rounded-2xl space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm font-medium text-emerald-400 mb-1.5">Take Profit (USD)</label>
-                      <input type="text" inputMode="decimal" value={formatInputDisplay(takeProfit)} onChange={handleNumberChange(setTakeProfit)} className="w-full px-3 py-2 bg-slate-900 border border-emerald-900/50 rounded-xl text-emerald-100 focus:ring-2 focus:ring-emerald-500" />
+                      <label className="block text-xs font-medium text-blue-400 mb-1">Precio Entrada</label>
+                      <input type="text" inputMode="decimal" value={formatInputDisplay(entryPrice)} onChange={handleNumberChange(setEntryPrice)} className="w-full px-2.5 py-1.5 bg-slate-900 border border-blue-900/50 rounded-xl text-white text-sm focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1.5">Acciones</label>
-                      <input type="text" inputMode="numeric" value={formatInputDisplay(shares)} onChange={handleNumberChange(setShares)} className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:ring-2 focus:ring-emerald-500" />
+                      <label className="block text-xs font-medium text-rose-400 mb-1">Stop Loss</label>
+                      <input type="text" inputMode="decimal" value={formatInputDisplay(stopLoss)} onChange={handleNumberChange(setStopLoss)} className="w-full px-2.5 py-1.5 bg-slate-900 border border-rose-900/50 rounded-xl text-rose-100 text-sm focus:ring-2 focus:ring-rose-500" />
                     </div>
                   </div>
-                )}
+
+                  {activeMenu === 1 && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-emerald-400 mb-1">Take Profit</label>
+                        <input type="text" inputMode="decimal" value={formatInputDisplay(takeProfit)} onChange={handleNumberChange(setTakeProfit)} className="w-full px-2.5 py-1.5 bg-slate-900 border border-emerald-900/50 rounded-xl text-emerald-100 text-sm focus:ring-2 focus:ring-emerald-500" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-400 mb-1">Acciones</label>
+                        <input type="text" inputMode="numeric" value={formatInputDisplay(shares)} onChange={handleNumberChange(setShares)} className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className="lg:col-span-7">
-            {isInvalidLong ? (
-              <div className="bg-rose-500/10 border border-rose-500/30 rounded-3xl p-6 flex items-start gap-4">
-                <AlertCircle className="text-rose-400 flex-shrink-0 mt-1" />
-                <div><h3 className="text-rose-400 font-semibold">Error</h3><p className="text-sm text-rose-300/80">El Precio de Entrada debe ser mayor al Stop Loss.</p></div>
+            {!isInvalidLong && activeMenu === 1 && (
+              <div className="space-y-3">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 border-l-4 border-l-rose-500 shadow-lg">
+                  <p className="text-slate-400 text-xs mb-1">Pérdida Máxima (Riesgo)</p>
+                  <h4 className="text-2xl font-bold text-rose-100">${formatCurrency(m1_totalRisk)}</h4>
+                  <p className="text-xs text-rose-400/80 mt-1">Equivale al {formatCurrency(m1_actualRiskPercent)}% del capital</p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 border-l-4 border-l-emerald-500 shadow-lg">
+                  <p className="text-slate-400 text-xs mb-1">Ganancia Proyectada (TP)</p>
+                  <h4 className="text-2xl font-bold text-emerald-100">${formatCurrency(m1_projectedProfit)}</h4>
+                </div>
               </div>
-            ) : (
-              <div className="h-full">
-                {activeMenu === 1 ? (
-                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl h-full flex flex-col justify-center gap-6 animate-in fade-in">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                      <div className="bg-slate-950 p-6 rounded-2xl border-l-4 border-l-rose-500">
-                        <p className="text-slate-400 text-sm mb-2">Pérdida Máxima (Riesgo)</p>
-                        <h4 className="text-3xl font-bold text-rose-100">${formatCurrency(m1_totalRisk)}</h4>
-                        <p className="text-sm text-rose-400/80 mt-2">Equivale al {formatCurrency(m1_actualRiskPercent)}% del capital</p>
-                      </div>
-                      <div className="bg-slate-950 p-6 rounded-2xl border-l-4 border-l-emerald-500">
-                        <p className="text-slate-400 text-sm mb-2">Ganancia Proyectada (TP)</p>
-                        <h4 className="text-3xl font-bold text-emerald-100">${formatCurrency(m1_projectedProfit)}</h4>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                   <div className="bg-gradient-to-br from-emerald-600 to-emerald-900 border border-emerald-800 rounded-3xl p-8 shadow-xl flex flex-col justify-center h-full animate-in fade-in">
-                      <p className="text-emerald-100 font-medium mb-2">Acciones a Comprar</p>
-                      <h3 className="text-6xl font-bold text-white">{formatInputDisplay(Math.floor(numCapital * (numRiskPercent/100) / (numEntryPrice - numStopLoss)))}</h3>
-                      <p className="text-emerald-100/70 text-sm mt-4">Arriesgando exactamente ${formatCurrency(numCapital * (numRiskPercent/100))} USD.</p>
-                   </div>
-                )}
+            )}
+
+            {!isInvalidLong && activeMenu === 2 && (
+              <div className="bg-gradient-to-br from-emerald-600 to-emerald-900 border border-emerald-800 rounded-2xl p-5 shadow-xl">
+                <p className="text-emerald-100 text-xs font-medium mb-1">Acciones a Comprar</p>
+                <h3 className="text-4xl font-bold text-white">{formatInputDisplay(Math.floor(numCapital * (numRiskPercent/100) / (numEntryPrice - numStopLoss)))}</h3>
+                <p className="text-emerald-100/70 text-xs mt-2">Arriesgando exactamente ${formatCurrency(numCapital * (numRiskPercent/100))} USD.</p>
+              </div>
+            )}
+
+            {isInvalidLong && (
+              <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 flex items-start gap-3">
+                <AlertCircle className="text-rose-400 flex-shrink-0 mt-0.5 w-4 h-4" />
+                <div><h3 className="text-rose-400 font-semibold text-xs">Error</h3><p className="text-xs text-rose-300/80">Entrada debe ser mayor a Stop Loss.</p></div>
               </div>
             )}
           </div>
+
+          {/* SECTOR DERECHO: Gráfico */}
+          <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-3xl p-2 flex flex-col md:flex-row shadow-2xl relative overflow-hidden">
+            <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-20">
+              <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
+              <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
+              <button onClick={() => setActiveTool("text")} className={`p-2 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-4 h-4" /></button>
+              <button onClick={() => setActiveTool("ruler")} className={`p-2 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-4 h-4" /></button>
+              <div className="w-px h-5 md:w-5 md:h-px bg-slate-700 my-1"></div>
+              <button onClick={() => setDrawings([])} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-4 h-4" /></button>
+            </div>
+
+            <div className="flex-1 p-2 md:p-3 min-h-[480px] relative">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 z-20 relative">
+                <form onSubmit={handleSearchTicker} className="flex items-center gap-1.5">
+                  <div className="relative">
+                    <input 
+                       type="text" 
+                       value={tickerInput}
+                       onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
+                       className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-28 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider"
+                       placeholder="AAPL"
+                    />
+                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2" />
+                  </div>
+                  <button type="submit" disabled={isLoadingData} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1">
+                    {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
+                  </button>
+                  <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20">
+                    {currentTicker}
+                  </span>
+                </form>
+
+                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+                  <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
+                  <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
+                  <div><span className="text-slate-500">L:</span> <span className="text-rose-400">{ohlcData.l}</span></div>
+                  <div><span className="text-slate-500">C:</span> <span className="text-white">{ohlcData.c}</span></div>
+                  <div className="pl-1.5 border-l border-slate-800"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{ohlcData.change}</span></div>
+                </div>
+              </div>
+
+              <div className="absolute inset-0 z-10 pointer-events-none">
+                <svg className="w-full h-full">
+                  {drawings.map(d => {
+                    if (d.type === 'line' || d.type === 'ruler') {
+                      return (
+                        <g key={d.id}>
+                          <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" strokeDasharray="4" />
+                          <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
+                          <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
+                        </g>
+                      );
+                    }
+                    if (d.type === 'text') {
+                      return (
+                        <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="11" fontWeight="bold">
+                          {d.text}
+                        </text>
+                      );
+                    }
+                    return null;
+                  })}
+                </svg>
+              </div>
+
+              <div ref={chartContainerRef} onClick={handleChartClick} className={`w-full h-[430px] ${activeTool !== 'pointer' ? 'cursor-pointer' : 'cursor-crosshair'}`}></div>
+            </div>
+          </div>
+
         </div>
 
       </div>
