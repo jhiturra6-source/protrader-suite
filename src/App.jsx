@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createChart, CandlestickSeries } from 'lightweight-charts';
 import { 
   TrendingUp, Calculator, BarChart2, AlertCircle, 
-  MousePointer2, Pencil, Type, Ruler, Trash2, Eye, EyeOff, Search 
+  MousePointer2, Pencil, Type, Ruler, Trash2, Eye, EyeOff, Search, Loader2 
 } from 'lucide-react';
 
 // --- UTILIDADES DE FORMATEO ---
@@ -24,38 +24,6 @@ const formatCurrency = (val) => {
   const [intPart, decPart] = fixed.split('.');
   const formattedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return `${formattedInt},${decPart}`;
-};
-
-// --- GENERADOR DE DATOS DE VELAS (1 Año de historial) ---
-const generateMockCandles = (basePrice, seedText = "AAPL") => {
-  const data = [];
-  let currentDate = new Date();
-  currentDate.setFullYear(currentDate.getFullYear() - 1); // 1 año atrás
-  
-  // Modificador basado en el texto del ticker para variar los gráficos
-  let seed = 1;
-  for (let i = 0; i < seedText.length; i++) seed += seedText.charCodeAt(i);
-  let currentPrice = basePrice * (0.8 + (seed % 40) / 100);
-
-  for (let i = 0; i < 365; i++) {
-    const open = currentPrice;
-    const volatility = basePrice * 0.02; 
-    const close = open + ((Math.sin(i + seed) * 0.5) + (Math.random() - 0.48)) * volatility;
-    const high = Math.max(open, close) + Math.random() * volatility * 0.6;
-    const low = Math.min(open, close) - Math.random() * volatility * 0.6;
-    
-    data.push({
-      time: currentDate.toISOString().split('T')[0],
-      open: parseFloat(open.toFixed(2)),
-      high: parseFloat(high.toFixed(2)),
-      low: parseFloat(low.toFixed(2)),
-      close: parseFloat(close.toFixed(2))
-    });
-    
-    currentPrice = close;
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-  return data;
 };
 
 // --- CÁLCULO DE INDICADORES ---
@@ -94,9 +62,12 @@ export default function App() {
   const [tickerInput, setTickerInput] = useState("AAPL");
   const [currentTicker, setCurrentTicker] = useState("AAPL");
   const [activeTool, setActiveTool] = useState("pointer");
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  const [chartData, setChartData] = useState([]);
+  const [drawings, setDrawings] = useState([]);
 
   // Estados de Indicadores (Visibilidad)
-  const [showSMA200, setShowSMA200] = useState(true);
+  const [showSMA200, setShowSMA200] = useState(false);
   const [showSMA50, setShowSMA50] = useState(true);
   const [showEMA21, setShowEMA21] = useState(false);
   const [showEMA10, setShowEMA10] = useState(false);
@@ -119,7 +90,6 @@ export default function App() {
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
   
-  // Referencias para Series de Indicadores
   const indicatorsRef = useRef({});
   const linesRef = useRef({});
 
@@ -144,13 +114,60 @@ export default function App() {
     setter(val);
   };
 
+  // === CARGAR DATOS REALES DE YAHOO FINANCE ===
+  useEffect(() => {
+    const fetchRealData = async () => {
+      setIsLoadingData(true);
+      try {
+        const period1 = Math.floor(Date.now() / 1000) - 365 * 24 * 60 * 60; // 1 año atrás
+        const period2 = Math.floor(Date.now() / 1000);
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${currentTicker}?period1=${period1}&period2=${period2}&interval=1d`;
+        
+        const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+        const json = await response.json();
+        const result = json.chart.result[0];
+        const timestamps = result.timestamp;
+        const quotes = result.indicators.quote[0];
+
+        const formattedData = [];
+        for (let i = 0; i < timestamps.length; i++) {
+          if (quotes.open[i] !== null && quotes.high[i] !== null && quotes.low[i] !== null && quotes.close[i] !== null) {
+            const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+            formattedData.push({
+              time: dateStr,
+              open: parseFloat(quotes.open[i].toFixed(2)),
+              high: parseFloat(quotes.high[i].toFixed(2)),
+              low: parseFloat(quotes.low[i].toFixed(2)),
+              close: parseFloat(quotes.close[i].toFixed(2))
+            });
+          }
+        }
+
+        if (formattedData.length > 0) {
+          setChartData(formattedData);
+          // Actualizar precio de entrada sugerido con el último cierre real
+          const lastClose = formattedData[formattedData.length - 1].close;
+          setEntryPrice(lastClose.toFixed(2).replace('.', ','));
+          setStopLoss((lastClose * 0.97).toFixed(2).replace('.', ','));
+          setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
+        }
+      } catch (error) {
+        console.error("Error al obtener datos reales, usando respaldo técnico", error);
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+
+    fetchRealData();
+  }, [currentTicker]);
+
   const handleSearchTicker = (e) => {
     e.preventDefault();
     if (!tickerInput.trim()) return;
     setCurrentTicker(tickerInput.toUpperCase().trim());
   };
 
-  // === INICIALIZACIÓN DEL GRÁFICO ===
+  // === INICIALIZACIÓN DEL GRÁFICO (Compatible con Lightweight Charts v5) ===
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -173,7 +190,6 @@ export default function App() {
     chartRef.current = chart;
     seriesRef.current = series;
 
-    // Suscripción al movimiento del crosshair para mostrar OHLC en tiempo real
     chart.subscribeCrosshairMove((param) => {
       if (param.time && param.seriesData.get(series)) {
         const data = param.seriesData.get(series);
@@ -202,14 +218,12 @@ export default function App() {
     };
   }, []);
 
-  // === ACTUALIZACIÓN DE DATOS SEGÚN TICKER ===
+  // === ACTUALIZAR DATOS Y TÉCNICOS EN EL GRÁFICO ===
   useEffect(() => {
-    if (!seriesRef.current) return;
-    const rawData = generateMockCandles(numEntryPrice || 150, currentTicker);
-    seriesRef.current.setData(rawData);
+    if (!seriesRef.current || chartData.length === 0) return;
+    seriesRef.current.setData(chartData);
 
-    // Rellenar leyenda con el último dato disponible por defecto
-    const last = rawData[rawData.length - 1];
+    const last = chartData[chartData.length - 1];
     if (last) {
       const diff = last.close - last.open;
       const pct = (diff / last.open) * 100;
@@ -222,46 +236,39 @@ export default function App() {
       });
     }
 
-    // Calcular y actualizar Indicadores
-既存IndicatorCleanUp: {
-      Object.keys(indicatorsRef.current).forEach(key => {
-        if (indicatorsRef.current[key]) {
-          chartRef.current.removeSeries(indicatorsRef.current[key]);
-        }
-      });
-      indicatorsRef.current = {};
-    }
+    Object.keys(indicatorsRef.current).forEach(key => {
+      if (indicatorsRef.current[key]) {
+        chartRef.current.removeSeries(indicatorsRef.current[key]);
+      }
+    });
+    indicatorsRef.current = {};
 
     const chart = chartRef.current;
 
-    // SMA 200
     if (showSMA200) {
       const sma200Line = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, title: 'SMA 200' });
-      sma200Line.setData(calculateSMA(rawData, 200));
+      sma200Line.setData(calculateSMA(chartData, 200));
       indicatorsRef.current.sma200 = sma200Line;
     }
-    // SMA 50
     if (showSMA50) {
       const sma50Line = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, title: 'SMA 50' });
-      sma50Line.setData(calculateSMA(rawData, 50));
+      sma50Line.setData(calculateSMA(chartData, 50));
       indicatorsRef.current.sma50 = sma50Line;
     }
-    // EMA 21
     if (showEMA21) {
       const ema21Line = chart.addLineSeries({ color: '#ec4899', lineWidth: 2, title: 'EMA 21' });
-      ema21Line.setData(calculateEMA(rawData, 21));
+      ema21Line.setData(calculateEMA(chartData, 21));
       indicatorsRef.current.ema21 = ema21Line;
     }
-    // EMA 10
     if (showEMA10) {
       const ema10Line = chart.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'EMA 10' });
-      ema10Line.setData(calculateEMA(rawData, 10));
+      ema10Line.setData(calculateEMA(chartData, 10));
       indicatorsRef.current.ema10 = ema10Line;
     }
 
-  }, [currentTicker, showSMA200, showSMA50, showEMA21, showEMA10]);
+  }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
-  // === LÍNEAS DE ENTRADA, SL Y TP EN TIEMPO REAL ===
+  // === GESTIÓN DE LÍNEAS DE RIESGO ===
   useEffect(() => {
     if (!seriesRef.current) return;
     const series = seriesRef.current;
@@ -287,6 +294,23 @@ export default function App() {
     }
   }, [numEntryPrice, numStopLoss, numTakeProfit]);
 
+  // === HERRAMIENTAS DE DIBUJO INTERACTIVAS (Punto 4) ===
+  const handleChartClick = (e) => {
+    if (activeTool === 'pointer') return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (activeTool === 'pencil') {
+      setDrawings(prev => [...prev, { id: Date.now(), type: 'line', x1: x - 20, y1: y, x2: x + 40, y2: y - 20 }]);
+    } else if (activeTool === 'text') {
+      const textVal = prompt("Ingrese el texto para el gráfico:", "Zona clave");
+      if (textVal) setDrawings(prev => [...prev, { id: Date.now(), type: 'text', x, y, text: textVal }]);
+    } else if (activeTool === 'ruler') {
+      setDrawings(prev => [...prev, { id: Date.now(), type: 'ruler', x1: x, y1: y, x2: x + 60, y2: y - 60, label: 'Medición' }]);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-8 font-sans selection:bg-emerald-500/30">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -297,7 +321,7 @@ export default function App() {
             <div className="p-2.5 bg-emerald-500/10 rounded-xl"><TrendingUp className="w-6 h-6 text-emerald-400" /></div>
             <div>
               <h1 className="text-2xl md:text-3xl font-bold text-white tracking-tight">ProTrader Suite</h1>
-              <p className="text-slate-500 text-sm">Gestión de Riesgo & Gráficos Interactivos Avanzados</p>
+              <p className="text-slate-500 text-sm">Gestión de Riesgo & Gráficos con Datos Reales</p>
             </div>
           </div>
 
@@ -311,11 +335,11 @@ export default function App() {
           </div>
         </header>
 
-        {/* SECCIÓN DE CONTROLES E INDICADORES (Puntos 5 y 6) */}
+        {/* PANEL DE INDICADORES */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
           <div className="text-sm font-medium text-white flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Panel de Indicadores:</span>
+            <span>Indicadores Técnicos:</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => setShowSMA200(!showSMA200)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
@@ -332,7 +356,7 @@ export default function App() {
             </button>
             <div className="w-px h-5 bg-slate-800 mx-1"></div>
             <button onClick={() => setShowRSI(!showRSI)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showRSI ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showRSI ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} RSI (14)
+              {showRSI ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} RSI
             </button>
             <button onClick={() => setShowMACD(!showMACD)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${showMACD ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
               {showMACD ? <Eye className="w-3.5 h-3.5"/> : <EyeOff className="w-3.5 h-3.5"/>} MACD
@@ -343,23 +367,22 @@ export default function App() {
           </div>
         </div>
 
-        {/* SECCIÓN DEL GRÁFICO INTERACTIVO */}
+        {/* SECCIÓN DEL GRÁFICO CON HERRAMIENTAS ACTIVAS */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-1 md:p-2 flex flex-col md:flex-row shadow-2xl relative overflow-hidden">
           
-          {/* Barra de herramientas lateral */}
-          <div className="flex md:flex-col gap-2 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start overflow-x-auto">
+          {/* Barra de herramientas funcional */}
+          <div className="flex md:flex-col gap-2 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-20">
             <button onClick={() => setActiveTool("pointer")} className={`p-2.5 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-5 h-5" /></button>
-            <button onClick={() => setActiveTool("pencil")} className={`p-2.5 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-5 h-5" /></button>
-            <button onClick={() => setActiveTool("text")} className={`p-2.5 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-5 h-5" /></button>
+            <button onClick={() => setActiveTool("pencil")} className={`p-2.5 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia (Haz clic en el gráfico)"><Pencil className="w-5 h-5" /></button>
+            <button onClick={() => setActiveTool("text")} className={`p-2.5 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto (Haz clic en el gráfico)"><Type className="w-5 h-5" /></button>
             <button onClick={() => setActiveTool("ruler")} className={`p-2.5 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-5 h-5" /></button>
             <div className="w-px h-6 md:w-6 md:h-px bg-slate-700 my-1"></div>
-            <button onClick={() => alert("Herramientas limpiadas")} className="p-2.5 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Eliminar dibujos"><Trash2 className="w-5 h-5" /></button>
+            <button onClick={() => setDrawings([])} className="p-2.5 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-5 h-5" /></button>
           </div>
 
-          {/* Contenedor principal del Gráfico */}
-          <div className="flex-1 p-2 md:p-4 min-h-[420px]">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-3">
-              {/* Buscador de acciones funcional (Punto 3) */}
+          {/* Contenedor del Gráfico */}
+          <div className="flex-1 p-2 md:p-4 min-h-[420px] relative">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-3 z-20 relative">
               <form onSubmit={handleSearchTicker} className="flex items-center gap-2">
                 <div className="relative">
                   <input 
@@ -371,15 +394,20 @@ export default function App() {
                   />
                   <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
                 </div>
-                <button type="submit" className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition">
-                  Cargar
+                <button type="submit" disabled={isLoadingData} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1.5">
+                  {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
                 </button>
                 <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
                   {currentTicker}
                 </span>
+                {activeTool !== 'pointer' && (
+                  <span className="text-xs bg-amber-500/10 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-md animate-pulse">
+                    Modo: {activeTool.toUpperCase()} (Haz clic en el gráfico)
+                  </span>
+                )}
               </form>
 
-              {/* Panel OHLC en Vivo (Punto 2) */}
+              {/* Panel OHLC en Vivo */}
               <div className="flex flex-wrap items-center gap-3 text-xs font-mono bg-slate-950 px-4 py-2 rounded-xl border border-slate-800">
                 <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
                 <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
@@ -389,14 +417,38 @@ export default function App() {
               </div>
             </div>
 
-            {/* Div donde Lightweight Charts inyecta el canvas */}
-            <div ref={chartContainerRef} className="w-full h-[380px] md:h-[420px] cursor-crosshair"></div>
+            {/* Capa de Dibujos Interactivos */}
+            <div className="absolute inset-0 z-10 pointer-events-none">
+              <svg className="w-full h-full">
+                {drawings.map(d => {
+                  if (d.type === 'line' || d.type === 'ruler') {
+                    return (
+                      <g key={d.id}>
+                        <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" strokeDasharray="4" />
+                        <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
+                        <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
+                      </g>
+                    );
+                  }
+                  if (d.type === 'text') {
+                    return (
+                      <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="12" fontWeight="bold" className="bg-slate-900">
+                        {d.text}
+                      </text>
+                    );
+                  }
+                  return null;
+                })}
+              </svg>
+            </div>
+
+            {/* Canvas del Gráfico */}
+            <div ref={chartContainerRef} onClick={handleChartClick} className={`w-full h-[380px] md:h-[420px] ${activeTool !== 'pointer' ? 'cursor-pointer' : 'cursor-crosshair'}`}></div>
           </div>
         </div>
 
-        {/* ÁREA DE CALCULADORA (Inputs y Resultados) */}
+        {/* CALCULADORA DE RIESGO */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
           <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-6">
             <h2 className="text-lg font-semibold text-white mb-6">Parámetros de Riesgo</h2>
             <div className="space-y-4">
@@ -474,8 +526,8 @@ export default function App() {
               </div>
             )}
           </div>
-
         </div>
+
       </div>
     </div>
   );
