@@ -1,8 +1,0 @@
-Hacer Deploy de pagina
-git add .
-
-git commit -m "tu mensaje de actualización"
-
-git push
-
-npm run deploy

@@ -65,7 +65,7 @@ export default function App() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [chartData, setChartData] = useState([]);
   
-  // Estados para herramientas de dibujo interactivas
+  // Dibujos e interacción
   const [drawings, setDrawings] = useState([]);
   const [currentDrawing, setCurrentDrawing] = useState(null);
 
@@ -75,10 +75,7 @@ export default function App() {
   const [showEMA21, setShowEMA21] = useState(false);
   const [showEMA10, setShowEMA10] = useState(false);
 
-  // Valores de las medias móviles actuales para panel lateral derecho
-  const [maValues, setMaValues] = useState({ sma200: '-', sma50: '-', ema21: '-', ema10: '-' });
-
-  // Tooltip flotante OHLC estilo TradingView
+  // Tooltip flotante
   const [tooltipData, setTooltipData] = useState(null);
 
   // Inputs de Riesgo
@@ -117,7 +114,6 @@ export default function App() {
     setter(val);
   };
 
-  // Consumo de datos reales
   useEffect(() => {
     const fetchRealMarketData = async () => {
       setIsLoadingData(true);
@@ -153,7 +149,7 @@ export default function App() {
           setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
         }
       } catch (error) {
-        console.error("Error al obtener datos reales de la API:", error);
+        console.error("Error API:", error);
       } finally {
         setIsLoadingData(false);
       }
@@ -162,13 +158,6 @@ export default function App() {
     fetchRealMarketData();
   }, [currentTicker]);
 
-  const handleSearchTicker = (e) => {
-    e.preventDefault();
-    if (!tickerInput.trim()) return;
-    setCurrentTicker(tickerInput.toUpperCase().trim());
-  };
-
-  // Inicializar Gráfico
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -183,22 +172,11 @@ export default function App() {
       rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.1, bottom: 0.1 } },
       timeScale: { 
         borderColor: '#1e293b', 
-        timeVisible: true,
-        secondsVisible: false,
-        fixLeftEdge: false,
-        fixRightEdge: false,
+        timeVisible: true, // Esto muestra las fechas nativamente, es vital no sobreescribirlo ni taparlo con CSS
         rightOffset: 12,
-        barSpacing: 10,
-        tickMarkFormatter: (time, tickMarkType, locale) => {
-          const date = new Date(time.year, time.month - 1, time.day);
-          if (tickMarkType === 2) {
-            return date.toLocaleDateString(locale, { month: 'short', year: '2-digit' });
-          }
-          return date.toLocaleDateString(locale, { day: 'numeric', month: 'short' });
-        },
       },
       width: chartContainerRef.current.clientWidth,
-      height: 480,
+      height: 500, // Ajustado a 500 para mayor visibilidad
     });
 
     const series = chart.addCandlestickSeries({
@@ -219,20 +197,6 @@ export default function App() {
       const diff = data.close - data.open;
       const pct = (diff / data.open) * 100;
 
-      setTooltipData({
-        x: param.point.x,
-        y: param.point.y,
-        ticker: currentTicker,
-        time: typeof param.time === 'object' ? `${param.time.year}-${param.time.month}-${param.time.day}` : param.time,
-        open: formatCurrency(data.open),
-        high: formatCurrency(data.high),
-        low: formatCurrency(data.low),
-        close: formatCurrency(data.close),
-        change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`,
-        isUp: diff >= 0
-      });
-
-      // Actualizar valores de medias móviles según la vela seleccionada
       const calcValues = {};
       if (indicatorsRef.current.sma200) {
         const val = param.seriesData.get(indicatorsRef.current.sma200);
@@ -250,7 +214,20 @@ export default function App() {
         const val = param.seriesData.get(indicatorsRef.current.ema10);
         calcValues.ema10 = val ? formatCurrency(val.value) : '-';
       }
-      setMaValues(prev => ({ ...prev, ...calcValues }));
+
+      setTooltipData({
+        x: param.point.x,
+        y: param.point.y,
+        ticker: currentTicker,
+        time: typeof param.time === 'object' ? `${param.time.year}-${param.time.month}-${param.time.day}` : param.time,
+        open: formatCurrency(data.open),
+        high: formatCurrency(data.high),
+        low: formatCurrency(data.low),
+        close: formatCurrency(data.close),
+        change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`,
+        isUp: diff >= 0,
+        ma: calcValues
+      });
     });
 
     const handleResize = () => {
@@ -266,42 +243,40 @@ export default function App() {
     };
   }, [currentTicker]);
 
-  // Actualizar datos y series de las medias móviles
+  // Actualizar datos de gráfico y sincronización segura de medias móviles
   useEffect(() => {
-    if (!seriesRef.current || chartData.length === 0) return;
+    if (!seriesRef.current || chartData.length === 0 || !chartRef.current) return;
+    const chart = chartRef.current;
+    
     seriesRef.current.setData(chartData);
 
-    Object.keys(indicatorsRef.current).forEach(key => {
-      if (indicatorsRef.current[key]) {
-        chartRef.current.removeSeries(indicatorsRef.current[key]);
+    const syncSeries = (key, show, data, color) => {
+      if (show) {
+        if (!indicatorsRef.current[key]) {
+          indicatorsRef.current[key] = chart.addLineSeries({ 
+            color, 
+            lineWidth: 1.5, 
+            priceLineVisible: false, 
+            lastValueVisible: false,
+            crosshairMarkerVisible: false
+          });
+        }
+        indicatorsRef.current[key].setData(data);
+      } else {
+        if (indicatorsRef.current[key]) {
+          chart.removeSeries(indicatorsRef.current[key]);
+          delete indicatorsRef.current[key];
+        }
       }
-    });
-    indicatorsRef.current = {};
+    };
 
-    const chart = chartRef.current;
-    if (showSMA200) {
-      const sma200Line = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-      sma200Line.setData(calculateSMA(chartData, 200));
-      indicatorsRef.current.sma200 = sma200Line;
-    }
-    if (showSMA50) {
-      const sma50Line = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-      sma50Line.setData(calculateSMA(chartData, 50));
-      indicatorsRef.current.sma50 = sma50Line;
-    }
-    if (showEMA21) {
-      const ema21Line = chart.addLineSeries({ color: '#ec4899', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-      ema21Line.setData(calculateEMA(chartData, 21));
-      indicatorsRef.current.ema21 = ema21Line;
-    }
-    if (showEMA10) {
-      const ema10Line = chart.addLineSeries({ color: '#06b6d4', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-      ema10Line.setData(calculateEMA(chartData, 10));
-      indicatorsRef.current.ema10 = ema10Line;
-    }
+    syncSeries('sma200', showSMA200, calculateSMA(chartData, 200), '#f59e0b');
+    syncSeries('sma50', showSMA50, calculateSMA(chartData, 50), '#3b82f6');
+    syncSeries('ema21', showEMA21, calculateEMA(chartData, 21), '#ec4899');
+    syncSeries('ema10', showEMA10, calculateEMA(chartData, 10), '#06b6d4');
+
   }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
-  // Líneas de precio de entrada, stop loss y take profit sin leyendas de texto intrusivas
   useEffect(() => {
     if (!seriesRef.current) return;
     const series = seriesRef.current;
@@ -327,10 +302,9 @@ export default function App() {
     }
   }, [numEntryPrice, numStopLoss, numTakeProfit]);
 
-  // Herramientas de dibujo interactivas sin paneo/movimiento del gráfico de fondo
   const handleMouseDown = (e) => {
     if (activeTool === 'pointer' || activeTool === 'text') return;
-    e.stopPropagation(); // Evita que el gráfico capture el evento de arrastre nativo
+    e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -363,6 +337,11 @@ export default function App() {
     }
   };
 
+  const deleteDrawing = (id, e) => {
+    e.stopPropagation();
+    setDrawings(prev => prev.filter(d => d.id !== id));
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 font-sans selection:bg-emerald-500/30">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -390,20 +369,20 @@ export default function App() {
         {/* DISTRIBUCIÓN PRINCIPAL */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
-          {/* SECTOR IZQUIERDO: Parámetros de Riesgo y Cálculos */}
-          <div className="lg:col-span-4 space-y-4">
+          {/* SECTOR IZQUIERDO: Achicado a col-span-3 */}
+          <div className="lg:col-span-3 space-y-4">
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
               <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Parámetros de Riesgo</h2>
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1">Capital (USD)</label>
-                    <input type="text" inputMode="decimal" value={formatInputDisplay(capital)} onChange={handleNumberChange(setCapital)} className="w-full px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
+                    <label className="block text-xs font-medium text-slate-400 mb-1">Capital</label>
+                    <input type="text" inputMode="decimal" value={formatInputDisplay(capital)} onChange={handleNumberChange(setCapital)} className="w-full px-2 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-400 mb-1">Riesgo %</label>
                     <div className="relative">
-                      <input type="text" inputMode="decimal" value={formatInputDisplay(riskPercent)} onChange={handleNumberChange(setRiskPercent)} className="w-full pl-3 pr-6 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
+                      <input type="text" inputMode="decimal" value={formatInputDisplay(riskPercent)} onChange={handleNumberChange(setRiskPercent)} className="w-full pl-2 pr-6 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
                       <div className="absolute right-2.5 top-2 text-slate-500 text-xs pointer-events-none">%</div>
                     </div>
                   </div>
@@ -412,24 +391,24 @@ export default function App() {
                 <div className="p-3 bg-slate-950 border border-slate-800 rounded-2xl space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-medium text-blue-400 mb-1">Precio Entrada</label>
-                      <input type="text" inputMode="decimal" value={formatInputDisplay(entryPrice)} onChange={handleNumberChange(setEntryPrice)} className="w-full px-2.5 py-1.5 bg-slate-900 border border-blue-900/50 rounded-xl text-white text-sm focus:ring-2 focus:ring-blue-500" />
+                      <label className="block text-[10px] font-medium text-blue-400 mb-1">Entrada</label>
+                      <input type="text" inputMode="decimal" value={formatInputDisplay(entryPrice)} onChange={handleNumberChange(setEntryPrice)} className="w-full px-2 py-1.5 bg-slate-900 border border-blue-900/50 rounded-xl text-white text-sm focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-rose-400 mb-1">Stop Loss</label>
-                      <input type="text" inputMode="decimal" value={formatInputDisplay(stopLoss)} onChange={handleNumberChange(setStopLoss)} className="w-full px-2.5 py-1.5 bg-slate-900 border border-rose-900/50 rounded-xl text-rose-100 text-sm focus:ring-2 focus:ring-rose-500" />
+                      <label className="block text-[10px] font-medium text-rose-400 mb-1">Stop Loss</label>
+                      <input type="text" inputMode="decimal" value={formatInputDisplay(stopLoss)} onChange={handleNumberChange(setStopLoss)} className="w-full px-2 py-1.5 bg-slate-900 border border-rose-900/50 rounded-xl text-rose-100 text-sm focus:ring-2 focus:ring-rose-500" />
                     </div>
                   </div>
 
                   {activeMenu === 1 && (
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-medium text-emerald-400 mb-1">Take Profit</label>
-                        <input type="text" inputMode="decimal" value={formatInputDisplay(takeProfit)} onChange={handleNumberChange(setTakeProfit)} className="w-full px-2.5 py-1.5 bg-slate-900 border border-emerald-900/50 rounded-xl text-emerald-100 text-sm focus:ring-2 focus:ring-emerald-500" />
+                        <label className="block text-[10px] font-medium text-emerald-400 mb-1">Take Profit</label>
+                        <input type="text" inputMode="decimal" value={formatInputDisplay(takeProfit)} onChange={handleNumberChange(setTakeProfit)} className="w-full px-2 py-1.5 bg-slate-900 border border-emerald-900/50 rounded-xl text-emerald-100 text-sm focus:ring-2 focus:ring-emerald-500" />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-slate-400 mb-1">Acciones</label>
-                        <input type="text" inputMode="numeric" value={formatInputDisplay(shares)} onChange={handleNumberChange(setShares)} className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
+                        <label className="block text-[10px] font-medium text-slate-400 mb-1">Acciones</label>
+                        <input type="text" inputMode="numeric" value={formatInputDisplay(shares)} onChange={handleNumberChange(setShares)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
                       </div>
                     </div>
                   )}
@@ -440,13 +419,13 @@ export default function App() {
             {!isInvalidLong && activeMenu === 1 && (
               <div className="space-y-3">
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 border-l-4 border-l-rose-500 shadow-lg">
-                  <p className="text-slate-400 text-xs mb-1">Pérdida Máxima (Riesgo)</p>
+                  <p className="text-slate-400 text-xs mb-1">Pérdida Máxima</p>
                   <h4 className="text-2xl font-bold text-rose-100">${formatCurrency(m1_totalRisk)}</h4>
-                  <p className="text-xs text-rose-400/80 mt-1">Equivale al {formatCurrency(m1_actualRiskPercent)}% del capital</p>
+                  <p className="text-[10px] text-rose-400/80 mt-1">{formatCurrency(m1_actualRiskPercent)}% del capital</p>
                 </div>
 
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 border-l-4 border-l-emerald-500 shadow-lg">
-                  <p className="text-slate-400 text-xs mb-1">Ganancia Proyectada (TP)</p>
+                  <p className="text-slate-400 text-xs mb-1">Ganancia Proyectada</p>
                   <h4 className="text-2xl font-bold text-emerald-100">${formatCurrency(m1_projectedProfit)}</h4>
                 </div>
               </div>
@@ -456,22 +435,13 @@ export default function App() {
               <div className="bg-gradient-to-br from-emerald-600 to-emerald-900 border border-emerald-800 rounded-2xl p-5 shadow-xl">
                 <p className="text-emerald-100 text-xs font-medium mb-1">Acciones a Comprar</p>
                 <h3 className="text-4xl font-bold text-white">{formatInputDisplay(Math.floor(numCapital * (numRiskPercent/100) / (numEntryPrice - numStopLoss)))}</h3>
-                <p className="text-emerald-100/70 text-xs mt-2">Arriesgando exactamente ${formatCurrency(numCapital * (numRiskPercent/100))} USD.</p>
-              </div>
-            )}
-
-            {isInvalidLong && (
-              <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 flex items-start gap-3">
-                <AlertCircle className="text-rose-400 flex-shrink-0 mt-0.5 w-4 h-4" />
-                <div><h3 className="text-rose-400 font-semibold text-xs">Error</h3><p className="text-xs text-rose-300/80">Entrada debe ser mayor a Stop Loss.</p></div>
               </div>
             )}
           </div>
 
-          {/* SECTOR DERECHO: Diseño Pulcro, Limpio y Profesional del Gráfico */}
-          <div className="lg:col-span-8 bg-slate-950 border border-slate-800/80 rounded-3xl p-3 shadow-2xl relative flex flex-col">
+          {/* SECTOR DERECHO: Expandido a col-span-9 */}
+          <div className="lg:col-span-9 bg-slate-950 border border-slate-800/80 rounded-3xl p-3 shadow-2xl relative flex flex-col">
             
-            {/* PANEL DE CONTROL SUPERIOR MINIMALISTA */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-3 py-2.5 mb-2 bg-slate-900/40 border border-slate-800/60 rounded-2xl z-20">
               <form onSubmit={handleSearchTicker} className="flex items-center gap-2">
                 <div className="relative">
@@ -487,54 +457,43 @@ export default function App() {
                 <button type="submit" disabled={isLoadingData} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1">
                   {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
                 </button>
-                <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
-                  {currentTicker}
-                </span>
               </form>
 
-              {/* Botones compactos de Medias Móviles */}
+              {/* Botones de Medias Móviles */}
               <div className="flex flex-wrap items-center gap-1.5">
-                <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                  SMA 200
-                </button>
-                <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                  SMA 50
-                </button>
-                <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                  EMA 21
-                </button>
-                <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
-                  EMA 10
-                </button>
+                <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 200</button>
+                <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 50</button>
+                <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>EMA 21</button>
+                <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>EMA 10</button>
               </div>
             </div>
 
             <div className="flex flex-col md:flex-row relative">
-              {/* Barra de herramientas de dibujo lateral */}
+              {/* Barra de herramientas */}
               <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800/60 bg-slate-900/30 items-center justify-start z-20">
                 <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
                 <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
                 <button onClick={() => setActiveTool("text")} className={`p-2 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-4 h-4" /></button>
                 <button onClick={() => setActiveTool("ruler")} className={`p-2 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-4 h-4" /></button>
                 <div className="w-px h-5 md:w-5 md:h-px bg-slate-800 my-1"></div>
-                <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-4 h-4" /></button>
+                <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar todo"><Trash2 className="w-4 h-4" /></button>
               </div>
 
               <div className="flex-1 p-1 relative flex gap-3">
-                {/* Contenedor principal del gráfico */}
+                {/* Contenedor del gráfico sin recorte para que se vean las fechas */}
                 <div className="flex-1 relative">
                   <div 
                     ref={chartContainerRef} 
                     onClick={handleChartClick}
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
-                    className="w-full h-[450px] cursor-crosshair rounded-2xl overflow-hidden relative"
+                    className="w-full h-full min-h-[500px] cursor-crosshair relative"
                   >
-                    {/* Ventana flotante de OHLC estilo TradingView (Sigue el cursor) */}
+                    {/* Tooltip con MAs integradas */}
                     {tooltipData && (
                       <div 
                         style={{ 
-                          left: `${Math.min(Math.max(10, tooltipData.x + 15), 350)}px`, 
+                          left: `${Math.min(Math.max(10, tooltipData.x + 15), 450)}px`, 
                           top: `${Math.max(10, tooltipData.y - 60)}px` 
                         }}
                         className="absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700/80 rounded-xl p-2.5 shadow-2xl backdrop-blur-md text-[11px] font-mono min-w-[150px]"
@@ -559,11 +518,21 @@ export default function App() {
                         <div className={`mt-1.5 pt-1 border-t border-slate-800 text-right font-bold ${tooltipData.isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {tooltipData.change}
                         </div>
+                        
+                        {/* Renderizar dinámicamente las MAs habilitadas dentro del tooltip */}
+                        {(showSMA200 || showSMA50 || showEMA21 || showEMA10) && (
+                          <div className="mt-1.5 pt-1.5 border-t border-slate-800 space-y-0.5">
+                            {showSMA200 && <div className="flex justify-between text-amber-300"><span>SMA 200:</span> <span>{tooltipData.ma.sma200}</span></div>}
+                            {showSMA50 && <div className="flex justify-between text-blue-300"><span>SMA 50:</span> <span>{tooltipData.ma.sma50}</span></div>}
+                            {showEMA21 && <div className="flex justify-between text-pink-300"><span>EMA 21:</span> <span>{tooltipData.ma.ema21}</span></div>}
+                            {showEMA10 && <div className="flex justify-between text-cyan-300"><span>EMA 10:</span> <span>{tooltipData.ma.ema10}</span></div>}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
 
-                  {/* SVG para renderizar dibujos interactivos con flechas y porcentajes */}
+                  {/* SVG Dibujos Interactivos */}
                   <div className="absolute inset-0 z-10 pointer-events-none">
                     <svg className="w-full h-full overflow-visible">
                       <defs>
@@ -615,58 +584,42 @@ export default function App() {
                       )}
                     </svg>
                   </div>
+
+                  {/* Contenedor de Botones Flotantes de Eliminación Individual */}
+                  <div className="absolute inset-0 z-20 pointer-events-none">
+                    {drawings.map(d => {
+                      const cx = d.type === 'text' ? d.x - 10 : (d.x1 + d.x2) / 2;
+                      const cy = d.type === 'text' ? d.y - 10 : (d.y1 + d.y2) / 2;
+                      return (
+                        <button 
+                          key={`del-${d.id}`}
+                          onClick={(e) => deleteDrawing(d.id, e)}
+                          className="absolute w-5 h-5 bg-rose-500/70 hover:bg-rose-500 text-white rounded-md flex items-center justify-center pointer-events-auto transform -translate-x-1/2 -translate-y-1/2 transition-all opacity-40 hover:opacity-100"
+                          style={{ left: cx, top: cy }}
+                          title="Eliminar dibujo"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                {/* PANEL LATERAL DERECHO: Niveles Clave y Medias Móviles */}
-                <div className="w-48 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 flex flex-col justify-between space-y-3 shrink-0 backdrop-blur-sm">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Niveles Clave</h3>
-                    <div className="space-y-2 text-xs">
-                      <div className="flex justify-between items-center bg-slate-950 p-1.5 rounded-lg border border-emerald-900/30">
-                        <span className="text-emerald-400 font-medium">Take Profit:</span>
-                        <span className="font-mono text-white">${formatCurrency(numTakeProfit)}</span>
-                      </div>
-                      <div className="flex justify-between items-center bg-slate-950 p-1.5 rounded-lg border border-blue-900/30">
-                        <span className="text-blue-400 font-medium">Entrada:</span>
-                        <span className="font-mono text-white">${formatCurrency(numEntryPrice)}</span>
-                      </div>
-                      <div className="flex justify-between items-center bg-slate-950 p-1.5 rounded-lg border border-rose-900/30">
-                        <span className="text-rose-400 font-medium">Stop Loss:</span>
-                        <span className="font-mono text-white">${formatCurrency(numStopLoss)}</span>
-                      </div>
+                {/* PANEL LATERAL DERECHO: Exclusivo Niveles Clave */}
+                <div className="w-40 bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 flex flex-col justify-start shrink-0 backdrop-blur-sm">
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Niveles Clave</h3>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex flex-col bg-slate-950 p-2 rounded-lg border border-emerald-900/30">
+                      <span className="text-emerald-400 font-medium text-[10px]">Take Profit</span>
+                      <span className="font-mono text-white">${formatCurrency(numTakeProfit)}</span>
                     </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Medias Móviles</h3>
-                    <div className="space-y-1.5 text-xs font-mono">
-                      {showSMA200 && (
-                        <div className="flex justify-between items-center text-amber-300">
-                          <span>SMA 200:</span>
-                          <span>${maValues.sma200}</span>
-                        </div>
-                      )}
-                      {showSMA50 && (
-                        <div className="flex justify-between items-center text-blue-300">
-                          <span>SMA 50:</span>
-                          <span>${maValues.sma50}</span>
-                        </div>
-                      )}
-                      {showEMA21 && (
-                        <div className="flex justify-between items-center text-pink-300">
-                          <span>EMA 21:</span>
-                          <span>${maValues.ema21}</span>
-                        </div>
-                      )}
-                      {showEMA10 && (
-                        <div className="flex justify-between items-center text-cyan-300">
-                          <span>EMA 10:</span>
-                          <span>${maValues.ema10}</span>
-                        </div>
-                      )}
-                      {!showSMA200 && !showSMA50 && !showEMA21 && !showEMA10 && (
-                        <span className="text-slate-600 text-[10px] italic">Ninguna activa</span>
-                      )}
+                    <div className="flex flex-col bg-slate-950 p-2 rounded-lg border border-blue-900/30">
+                      <span className="text-blue-400 font-medium text-[10px]">Entrada</span>
+                      <span className="font-mono text-white">${formatCurrency(numEntryPrice)}</span>
+                    </div>
+                    <div className="flex flex-col bg-slate-950 p-2 rounded-lg border border-rose-900/30">
+                      <span className="text-rose-400 font-medium text-[10px]">Stop Loss</span>
+                      <span className="font-mono text-white">${formatCurrency(numStopLoss)}</span>
                     </div>
                   </div>
                 </div>
