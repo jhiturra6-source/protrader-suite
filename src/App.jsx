@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createChart } from 'lightweight-charts';
+import { createChart, LineStyle } from 'lightweight-charts';
 import { 
   TrendingUp, Calculator, BarChart2, AlertCircle, 
   MousePointer2, Pencil, Type, Ruler, Trash2, Eye, EyeOff, Search, Loader2 
@@ -64,16 +64,19 @@ export default function App() {
   const [activeTool, setActiveTool] = useState("pointer");
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [chartData, setChartData] = useState([]);
+  
+  // Estados para herramientas de dibujo interactivas
   const [drawings, setDrawings] = useState([]);
+  const [currentDrawing, setCurrentDrawing] = useState(null);
 
-  // Estados de Indicadores
+  // Estados de Indicadores (Solo se mantienen medias móviles)
   const [showSMA200, setShowSMA200] = useState(false);
   const [showSMA50, setShowSMA50] = useState(true);
   const [showEMA21, setShowEMA21] = useState(false);
   const [showEMA10, setShowEMA10] = useState(false);
-  const [showRSI, setShowRSI] = useState(false);
-  const [showMACD, setShowMACD] = useState(false);
-  const [showStochastic, setShowStochastic] = useState(false);
+
+  // Valores de las medias móviles actuales para panel lateral derecho
+  const [maValues, setMaValues] = useState({ sma200: '-', sma50: '-', ema21: '-', ema10: '-' });
 
   // OHLC Legend State
   const [ohlcData, setOhlcData] = useState({ o: '-', h: '-', l: '-', c: '-', change: '-' });
@@ -114,7 +117,7 @@ export default function App() {
     setter(val);
   };
 
-  // === CONSUMO DE DATOS REALES DESDE LA API SERVERLESS DE VERCEL ===
+  // Consumo de datos reales
   useEffect(() => {
     const fetchRealMarketData = async () => {
       setIsLoadingData(true);
@@ -165,20 +168,26 @@ export default function App() {
     setCurrentTicker(tickerInput.toUpperCase().trim());
   };
 
-  // Inicializar Gráfico con escala de fechas visible abajo
+  // Inicializar Gráfico con escala de fechas visible abajo y crosshair personalizado
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     const chart = createChart(chartContainerRef.current, {
       layout: { background: { type: 'solid', color: '#0f172a' }, textColor: '#94a3b8' },
       grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
-      crosshair: { mode: 1 },
-      rightPriceScale: { borderColor: '#1e293b' },
+      crosshair: { 
+        mode: 0, // Permite movimiento libre y preciso del cursor
+        vertLine: { color: '#38bdf8', width: 1, style: LineStyle.Dasched, labelBackgroundColor: '#0284c7' },
+        horzLine: { color: '#38bdf8', width: 1, style: LineStyle.Dasched, labelBackgroundColor: '#0284c7' }
+      },
+      rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.1, bottom: 0.2 } },
       timeScale: { 
         borderColor: '#1e293b', 
         timeVisible: true,
-        fixLeftEdge: true,
-        fixRightEdge: true,
+        secondsVisible: false,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+        rightOffset: 12,
       },
       width: chartContainerRef.current.clientWidth,
       height: 480,
@@ -205,6 +214,26 @@ export default function App() {
           c: formatCurrency(data.close),
           change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`
         });
+
+        // Actualizar valores de medias móviles según la vela seleccionada por el cursor
+        const calcValues = {};
+        if (indicatorsRef.current.sma200) {
+          const val = param.seriesData.get(indicatorsRef.current.sma200);
+          calcValues.sma200 = val ? formatCurrency(val.value) : '-';
+        }
+        if (indicatorsRef.current.sma50) {
+          const val = param.seriesData.get(indicatorsRef.current.sma50);
+          calcValues.sma50 = val ? formatCurrency(val.value) : '-';
+        }
+        if (indicatorsRef.current.ema21) {
+          const val = param.seriesData.get(indicatorsRef.current.ema21);
+          calcValues.ema21 = val ? formatCurrency(val.value) : '-';
+        }
+        if (indicatorsRef.current.ema10) {
+          const val = param.seriesData.get(indicatorsRef.current.ema10);
+          calcValues.ema10 = val ? formatCurrency(val.value) : '-';
+        }
+        setMaValues(prev => ({ ...prev, ...calcValues }));
       }
     });
 
@@ -221,6 +250,7 @@ export default function App() {
     };
   }, []);
 
+  // Actualizar datos y series de las medias móviles (sin líneas horizontales de puntos)
   useEffect(() => {
     if (!seriesRef.current || chartData.length === 0) return;
     seriesRef.current.setData(chartData);
@@ -247,27 +277,28 @@ export default function App() {
 
     const chart = chartRef.current;
     if (showSMA200) {
-      const sma200Line = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, title: 'SMA 200' });
+      const sma200Line = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
       sma200Line.setData(calculateSMA(chartData, 200));
       indicatorsRef.current.sma200 = sma200Line;
     }
     if (showSMA50) {
-      const sma50Line = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, title: 'SMA 50' });
+      const sma50Line = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
       sma50Line.setData(calculateSMA(chartData, 50));
       indicatorsRef.current.sma50 = sma50Line;
     }
     if (showEMA21) {
-      const ema21Line = chart.addLineSeries({ color: '#ec4899', lineWidth: 2, title: 'EMA 21' });
+      const ema21Line = chart.addLineSeries({ color: '#ec4899', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
       ema21Line.setData(calculateEMA(chartData, 21));
       indicatorsRef.current.ema21 = ema21Line;
     }
     if (showEMA10) {
-      const ema10Line = chart.addLineSeries({ color: '#06b6d4', lineWidth: 2, title: 'EMA 10' });
+      const ema10Line = chart.addLineSeries({ color: '#06b6d4', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
       ema10Line.setData(calculateEMA(chartData, 10));
       indicatorsRef.current.ema10 = ema10Line;
     }
   }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
+  // Líneas de precio de entrada, stop loss y take profit en el gráfico
   useEffect(() => {
     if (!seriesRef.current) return;
     const series = seriesRef.current;
@@ -293,19 +324,38 @@ export default function App() {
     }
   }, [numEntryPrice, numStopLoss, numTakeProfit]);
 
-  const handleChartClick = (e) => {
-    if (activeTool === 'pointer') return;
+  // Manejo interactivo de herramientas de dibujo (Línea de tendencia y Medir rango con clics de inicio y fin)
+  const handleMouseDown = (e) => {
+    if (activeTool === 'pointer' || activeTool === 'text') return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    if (activeTool === 'pencil') {
-      setDrawings(prev => [...prev, { id: Date.now(), type: 'line', x1: x - 20, y1: y, x2: x + 40, y2: y - 20 }]);
-    } else if (activeTool === 'text') {
+    if (!currentDrawing) {
+      setCurrentDrawing({ type: activeTool, x1: x, y1: y, x2: x, y2: y });
+    } else {
+      // Finalizar dibujo al segundo clic
+      const finished = { ...currentDrawing, id: Date.now(), x2: x, y2: y };
+      setDrawings(prev => [...prev, finished]);
+      setCurrentDrawing(null);
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (!currentDrawing) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setCurrentDrawing(prev => ({ ...prev, x2: x, y2: y }));
+  };
+
+  const handleChartClick = (e) => {
+    if (activeTool === 'text') {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
       const textVal = prompt("Ingrese el texto:", "Zona de interés");
       if (textVal) setDrawings(prev => [...prev, { id: Date.now(), type: 'text', x, y, text: textVal }]);
-    } else if (activeTool === 'ruler') {
-      setDrawings(prev => [...prev, { id: Date.now(), type: 'ruler', x1: x, y1: y, x2: x + 60, y2: y - 60 }]);
     }
   };
 
@@ -333,42 +383,10 @@ export default function App() {
           </div>
         </header>
 
-        {/* PANEL DE INDICADORES TÉCNICOS */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-xs font-medium text-white flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Indicadores:</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showSMA200 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} SMA 200
-            </button>
-            <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showSMA50 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} SMA 50
-            </button>
-            <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showEMA21 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} EMA 21
-            </button>
-            <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showEMA10 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} EMA 10
-            </button>
-            <div className="w-px h-4 bg-slate-800 mx-1"></div>
-            <button onClick={() => setShowRSI(!showRSI)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showRSI ? 'bg-purple-500/20 border-purple-500/50 text-purple-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showRSI ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} RSI
-            </button>
-            <button onClick={() => setShowMACD(!showMACD)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showMACD ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showMACD ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} MACD
-            </button>
-            <button onClick={() => setShowStochastic(!showStochastic)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showStochastic ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-              {showStochastic ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} Stochastic
-            </button>
-          </div>
-        </div>
-
         {/* DISTRIBUCIÓN PRINCIPAL */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
-          {/* SECTOR IZQUIERDO */}
+          {/* SECTOR IZQUIERDO: Parámetros de Riesgo y Cálculos */}
           <div className="lg:col-span-4 space-y-4">
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
               <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Parámetros de Riesgo</h2>
@@ -446,74 +464,197 @@ export default function App() {
             )}
           </div>
 
-          {/* SECTOR DERECHO: Gráfico con fechas visibles abajo */}
-          <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-3xl p-2 flex flex-col md:flex-row shadow-2xl relative overflow-hidden">
-            <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-20">
-              <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
-              <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
-              <button onClick={() => setActiveTool("text")} className={`p-2 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-4 h-4" /></button>
-              <button onClick={() => setActiveTool("ruler")} className={`p-2 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-4 h-4" /></button>
-              <div className="w-px h-5 md:w-5 md:h-px bg-slate-700 my-1"></div>
-              <button onClick={() => setDrawings([])} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-4 h-4" /></button>
+          {/* SECTOR DERECHO: Gráfico, Barra de Indicadores Integrada y Detalles de Precios a la Derecha */}
+          <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-3xl p-3 shadow-2xl relative flex flex-col">
+            
+            {/* BARRA DE INDICADORES INTEGRADA ARRIBA (Sin entorpecer precios) */}
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-2.5 mb-3 flex flex-wrap items-center justify-between gap-2 z-20">
+              <div className="text-xs font-medium text-white flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Medias Móviles:</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                  {showSMA200 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} SMA 200
+                </button>
+                <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                  {showSMA50 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} SMA 50
+                </button>
+                <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                  {showEMA21 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} EMA 21
+                </button>
+                <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                  {showEMA10 ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>} EMA 10
+                </button>
+              </div>
             </div>
 
-            <div className="flex-1 p-2 md:p-3 min-h-[500px] relative flex flex-col justify-between">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2 z-20 relative">
-                <form onSubmit={handleSearchTicker} className="flex items-center gap-1.5">
-                  <div className="relative">
-                    <input 
-                       type="text" 
-                       value={tickerInput}
-                       onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
-                       className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-28 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider"
-                       placeholder="AAPL"
-                    />
-                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2" />
-                  </div>
-                  <button type="submit" disabled={isLoadingData} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1">
-                    {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
-                  </button>
-                  <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20">
-                    {currentTicker}
-                  </span>
-                </form>
+            <div className="flex flex-col md:flex-row relative">
+              {/* Barra de herramientas de dibujo */}
+              <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-20">
+                <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
+                <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
+                <button onClick={() => setActiveTool("text")} className={`p-2 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-4 h-4" /></button>
+                <button onClick={() => setActiveTool("ruler")} className={`p-2 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-4 h-4" /></button>
+                <div className="w-px h-5 md:w-5 md:h-px bg-slate-700 my-1"></div>
+                <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-4 h-4" /></button>
+              </div>
 
-                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
-                  <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
-                  <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
-                  <div><span className="text-slate-500">L:</span> <span className="text-rose-400">{ohlcData.l}</span></div>
-                  <div><span className="text-slate-500">C:</span> <span className="text-white">{ohlcData.c}</span></div>
-                  <div className="pl-1.5 border-l border-slate-800"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{ohlcData.change}</span></div>
+              <div className="flex-1 p-2 relative flex flex-col justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2 z-20 relative">
+                  <form onSubmit={handleSearchTicker} className="flex items-center gap-1.5">
+                    <div className="relative">
+                      <input 
+                         type="text" 
+                         value={tickerInput}
+                         onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
+                         className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-28 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider"
+                         placeholder="AAPL"
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2" />
+                    </div>
+                    <button type="submit" disabled={isLoadingData} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1">
+                      {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
+                    </button>
+                    <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20">
+                      {currentTicker}
+                    </span>
+                  </form>
+
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+                    <div><span className="text-slate-500">O:</span> <span className="text-white">{ohlcData.o}</span></div>
+                    <div><span className="text-slate-500">H:</span> <span className="text-emerald-400">{ohlcData.h}</span></div>
+                    <div><span className="text-slate-500">L:</span> <span className="text-rose-400">{ohlcData.l}</span></div>
+                    <div><span className="text-slate-500">C:</span> <span className="text-white">{ohlcData.c}</span></div>
+                    <div className="pl-1.5 border-l border-slate-800"><span className={ohlcData.change.startsWith('+') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{ohlcData.change}</span></div>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  {/* Contenedor principal del gráfico */}
+                  <div className="flex-1 relative">
+                    <div 
+                      ref={chartContainerRef} 
+                      onClick={handleChartClick}
+                      onMouseDown={handleMouseDown}
+                      onMouseMove={handleMouseMove}
+                      className={`w-full h-[440px] ${activeTool !== 'pointer' ? 'cursor-crosshair' : 'cursor-crosshair'}`}
+                    ></div>
+
+                    {/* SVG para renderizar dibujos interactivos con flechas y porcentajes */}
+                    <div className="absolute inset-0 z-10 pointer-events-none">
+                      <svg className="w-full h-full overflow-visible">
+                        <defs>
+                          <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
+                          </marker>
+                        </defs>
+                        {drawings.map(d => {
+                          if (d.type === 'pencil') {
+                            return (
+                              <g key={d.id}>
+                                <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" markerEnd="url(#arrow)" />
+                                <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
+                                <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
+                              </g>
+                            );
+                          }
+                          if (d.type === 'ruler') {
+                            const diffY = d.y2 - d.y1;
+                            const pctDiff = ((d.y1 - d.y2) / Math.abs(d.y1 || 1)) * 100;
+                            const midX = (d.x1 + d.x2) / 2;
+                            const midY = (d.y1 + d.y2) / 2;
+                            return (
+                              <g key={d.id}>
+                                <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#10b981" strokeWidth="2" strokeDasharray="4" markerEnd="url(#arrow)" />
+                                <circle cx={d.x1} cy={d.y1} r="3" fill="#10b981" />
+                                <circle cx={d.x2} cy={d.y2} r="3" fill="#10b981" />
+                                <rect x={midX - 25} y={midY - 12} width="50" height="20" rx="4" fill="#0f172a" stroke="#10b981" strokeWidth="1" />
+                                <text x={midX} y={midY + 2} fill="#10b981" fontSize="10" fontWeight="bold" textAnchor="middle">
+                                  {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(2)}%
+                                </text>
+                              </g>
+                            );
+                          }
+                          if (d.type === 'text') {
+                            return (
+                              <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="11" fontWeight="bold">
+                                {d.text}
+                              </text>
+                            );
+                          }
+                          return null;
+                        })}
+
+                        {/* Dibujo en tiempo real mientras se arrastra */}
+                        {currentDrawing && currentDrawing.type === 'pencil' && (
+                          <line x1={currentDrawing.x1} y1={currentDrawing.y1} x2={currentDrawing.x2} y2={currentDrawing.y2} stroke="#38bdf8" strokeWidth="2" markerEnd="url(#arrow)" />
+                        )}
+                        {currentDrawing && currentDrawing.type === 'ruler' && (
+                          <line x1={currentDrawing.x1} y1={currentDrawing.y1} x2={currentDrawing.x2} y2={currentDrawing.y2} stroke="#10b981" strokeWidth="2" strokeDasharray="4" markerEnd="url(#arrow)" />
+                        )}
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* PANEL LATERAL DERECHO: Detalles de Take Profit, Entrada, Stop Loss y Medias Móviles (fuera de la pizarra) */}
+                  <div className="w-48 bg-slate-950 border border-slate-800 rounded-2xl p-3 flex flex-col justify-between space-y-3 shrink-0">
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Niveles Clave</h3>
+                      <div className="space-y-2 text-xs">
+                        <div className="flex justify-between items-center bg-slate-900 p-1.5 rounded-lg border border-emerald-900/30">
+                          <span className="text-emerald-400 font-medium">Take Profit:</span>
+                          <span className="font-mono text-white">${formatCurrency(numTakeProfit)}</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-slate-900 p-1.5 rounded-lg border border-blue-900/30">
+                          <span className="text-blue-400 font-medium">Entrada:</span>
+                          <span className="font-mono text-white">${formatCurrency(numEntryPrice)}</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-slate-900 p-1.5 rounded-lg border border-rose-900/30">
+                          <span className="text-rose-400 font-medium">Stop Loss:</span>
+                          <span className="font-mono text-white">${formatCurrency(numStopLoss)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">Medias Móviles</h3>
+                      <div className="space-y-1.5 text-xs font-mono">
+                        {showSMA200 && (
+                          <div className="flex justify-between items-center text-amber-300">
+                            <span>SMA 200:</span>
+                            <span>${maValues.sma200}</span>
+                          </div>
+                        )}
+                        {showSMA50 && (
+                          <div className="flex justify-between items-center text-blue-300">
+                            <span>SMA 50:</span>
+                            <span>${maValues.sma50}</span>
+                          </div>
+                        )}
+                        {showEMA21 && (
+                          <div className="flex justify-between items-center text-pink-300">
+                            <span>EMA 21:</span>
+                            <span>${maValues.ema21}</span>
+                          </div>
+                        )}
+                        {showEMA10 && (
+                          <div className="flex justify-between items-center text-cyan-300">
+                            <span>EMA 10:</span>
+                            <span>${maValues.ema10}</span>
+                          </div>
+                        )}
+                        {!showSMA200 && !showSMA50 && !showEMA21 && !showEMA10 && (
+                          <span className="text-slate-600 text-[10px] italic">Ninguna activa</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
               </div>
-
-              <div className="absolute inset-0 z-10 pointer-events-none">
-                <svg className="w-full h-full">
-                  {drawings.map(d => {
-                    if (d.type === 'line' || d.type === 'ruler') {
-                      return (
-                        <g key={d.id}>
-                          <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" strokeDasharray="4" />
-                          <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
-                          <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
-                        </g>
-                      );
-                    }
-                    if (d.type === 'text') {
-                      return (
-                        <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="11" fontWeight="bold">
-                          {d.text}
-                        </text>
-                      );
-                    }
-                    return null;
-                  })}
-                </svg>
-              </div>
-
-              {/* Contenedor del Gráfico con altura optimizada para mostrar el eje X de fechas */}
-              <div ref={chartContainerRef} onClick={handleChartClick} className={`w-full h-[440px] ${activeTool !== 'pointer' ? 'cursor-pointer' : 'cursor-crosshair'}`}></div>
             </div>
+
           </div>
 
         </div>
