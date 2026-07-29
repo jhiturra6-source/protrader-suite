@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createChart } from 'lightweight-charts';
+import { createChart, CandlestickSeries } from 'lightweight-charts';
 import { 
   TrendingUp, Calculator, BarChart2, AlertCircle, 
   MousePointer2, Pencil, Type, Ruler, Trash2, Eye, EyeOff, Search 
@@ -164,7 +164,7 @@ export default function App() {
       height: 420,
     });
 
-    const series = chart.addCandlestickSeries({
+    const series = chart.addSeries(CandlestickSeries, {
       upColor: '#10b981', downColor: '#f43f5e', 
       borderVisible: false, 
       wickUpColor: '#10b981', wickDownColor: '#f43f5e'
