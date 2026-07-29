@@ -26,39 +26,6 @@ const formatCurrency = (val) => {
   return `${formattedInt},${decPart}`;
 };
 
-// --- MOTOR DE DATOS HISTÓRICOS REALISTAS ---
-const generateRealMarketData = (ticker, basePrice = 150) => {
-  const data = [];
-  let currentDate = new Date();
-  currentDate.setFullYear(currentDate.getFullYear() - 1); // 1 año completo hacia atrás
-  
-  let seed = 0;
-  for (let i = 0; i < ticker.length; i++) seed += ticker.charCodeAt(i);
-  
-  let currentPrice = basePrice * (0.7 + (seed % 50) / 50);
-
-  for (let i = 0; i < 365; i++) {
-    const open = currentPrice;
-    const volatility = basePrice * 0.025;
-    const trend = Math.sin(i / 15 + seed) * 0.4;
-    const close = open + (trend + (Math.random() - 0.49)) * volatility;
-    const high = Math.max(open, close) + Math.random() * volatility * 0.5;
-    const low = Math.min(open, close) - Math.random() * volatility * 0.5;
-    
-    data.push({
-      time: currentDate.toISOString().split('T')[0],
-      open: parseFloat(open.toFixed(2)),
-      high: parseFloat(high.toFixed(2)),
-      low: parseFloat(low.toFixed(2)),
-      close: parseFloat(close.toFixed(2))
-    });
-    
-    currentPrice = close;
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-  return data;
-};
-
 // --- CÁLCULO DE INDICADORES ---
 const calculateSMA = (data, period) => {
   const result = [];
@@ -147,24 +114,49 @@ export default function App() {
     setter(val);
   };
 
+  // === CONSUMO DE DATOS REALES DESDE LA API SERVERLESS DE VERCEL ===
   useEffect(() => {
-    setIsLoadingData(true);
-    const timer = setTimeout(() => {
-      const basePrices = { AAPL: 180, TSLA: 240, SPY: 510, BTC: 65000, NVDA: 120 };
-      const base = basePrices[currentTicker] || 100;
-      const generated = generateRealMarketData(currentTicker, base);
-      setChartData(generated);
+    const fetchRealMarketData = async () => {
+      setIsLoadingData(true);
+      try {
+        const response = await fetch(`/api/finance?symbol=${currentTicker}`);
+        const json = await response.json();
+        
+        if (json.error) throw new Error(json.error);
 
-      if (generated.length > 0) {
-        const lastClose = generated[generated.length - 1].close;
-        setEntryPrice(lastClose.toFixed(2).replace('.', ','));
-        setStopLoss((lastClose * 0.97).toFixed(2).replace('.', ','));
-        setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
+        const result = json.chart.result[0];
+        const timestamps = result.timestamp;
+        const quotes = result.indicators.quote[0];
+
+        const formattedData = [];
+        for (let i = 0; i < timestamps.length; i++) {
+          if (quotes.open[i] !== null && quotes.high[i] !== null && quotes.low[i] !== null && quotes.close[i] !== null) {
+            const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+            formattedData.push({
+              time: dateStr,
+              open: parseFloat(quotes.open[i].toFixed(2)),
+              high: parseFloat(quotes.high[i].toFixed(2)),
+              low: parseFloat(quotes.low[i].toFixed(2)),
+              close: parseFloat(quotes.close[i].toFixed(2))
+            });
+          }
+        }
+
+        if (formattedData.length > 0) {
+          setChartData(formattedData);
+          const lastClose = formattedData[formattedData.length - 1].close;
+          setEntryPrice(lastClose.toFixed(2).replace('.', ','));
+          setStopLoss((lastClose * 0.97).toFixed(2).replace('.', ','));
+          setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
+        }
+      } catch (error) {
+        console.error("Error al obtener datos reales de la API:", error);
+      } finally {
+        setIsLoadingData(false);
       }
-      setIsLoadingData(false);
-    }, 200);
+    };
 
-    return () => clearTimeout(timer);
+    fetchRealMarketData();
   }, [currentTicker]);
 
   const handleSearchTicker = (e) => {
@@ -173,7 +165,7 @@ export default function App() {
     setCurrentTicker(tickerInput.toUpperCase().trim());
   };
 
-  // Inicializar Gráfico con el método clásico compatible
+  // Inicializar Gráfico con escala de fechas visible abajo
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -182,7 +174,12 @@ export default function App() {
       grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
       crosshair: { mode: 1 },
       rightPriceScale: { borderColor: '#1e293b' },
-      timeScale: { borderColor: '#1e293b', timeVisible: true },
+      timeScale: { 
+        borderColor: '#1e293b', 
+        timeVisible: true,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+      },
       width: chartContainerRef.current.clientWidth,
       height: 480,
     });
@@ -449,7 +446,7 @@ export default function App() {
             )}
           </div>
 
-          {/* SECTOR DERECHO: Gráfico */}
+          {/* SECTOR DERECHO: Gráfico con fechas visibles abajo */}
           <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-3xl p-2 flex flex-col md:flex-row shadow-2xl relative overflow-hidden">
             <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800 bg-slate-900/50 items-center justify-start z-20">
               <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
@@ -460,8 +457,8 @@ export default function App() {
               <button onClick={() => setDrawings([])} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition" title="Limpiar dibujos"><Trash2 className="w-4 h-4" /></button>
             </div>
 
-            <div className="flex-1 p-2 md:p-3 min-h-[480px] relative">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 z-20 relative">
+            <div className="flex-1 p-2 md:p-3 min-h-[500px] relative flex flex-col justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2 z-20 relative">
                 <form onSubmit={handleSearchTicker} className="flex items-center gap-1.5">
                   <div className="relative">
                     <input 
@@ -514,7 +511,8 @@ export default function App() {
                 </svg>
               </div>
 
-              <div ref={chartContainerRef} onClick={handleChartClick} className={`w-full h-[430px] ${activeTool !== 'pointer' ? 'cursor-pointer' : 'cursor-crosshair'}`}></div>
+              {/* Contenedor del Gráfico con altura optimizada para mostrar el eje X de fechas */}
+              <div ref={chartContainerRef} onClick={handleChartClick} className={`w-full h-[440px] ${activeTool !== 'pointer' ? 'cursor-pointer' : 'cursor-crosshair'}`}></div>
             </div>
           </div>
 
