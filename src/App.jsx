@@ -68,9 +68,9 @@ export default function App() {
   // Dibujos e interacción
   const [drawings, setDrawings] = useState([]);
   const [currentDrawing, setCurrentDrawing] = useState(null);
-  const [trendLineColor, setTrendLineColor] = useState("#38bdf8"); // Color por defecto de línea
-  const [draggingTextId, setDraggingTextId] = useState(null); // ID del texto siendo arrastrado
-  const [chartSync, setChartSync] = useState(0); // Trigger para re-renderizar SVG al mover gráfico
+  const [trendLineColor, setTrendLineColor] = useState("#38bdf8"); 
+  const [draggingTextId, setDraggingTextId] = useState(null); 
+  const [chartSync, setChartSync] = useState(0); 
 
   // Estados de Indicadores
   const [showSMA200, setShowSMA200] = useState(false);
@@ -127,7 +127,6 @@ export default function App() {
     const fetchRealMarketData = async () => {
       setIsLoadingData(true);
       try {
-        // SOLUCIÓN 1: Eliminado el range=5y. Queda como estaba.
         const response = await fetch(`/api/finance?symbol=${currentTicker}`);
         const json = await response.json();
         
@@ -198,10 +197,9 @@ export default function App() {
     chartRef.current = chart;
     seriesRef.current = series;
 
-    // Actualizar los dibujos cuando el usuario hace scroll/zoom en el gráfico
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => setChartSync(Date.now()));
     chart.subscribeCrosshairMove((param) => {
-      setChartSync(Date.now()); // Forza re-render para mantener dibujos sincronizados en paneos de Y-axis
+      setChartSync(Date.now()); 
       
       if (!param.time || !param.point || !param.seriesData.get(series)) {
         setTooltipData(null);
@@ -224,6 +222,26 @@ export default function App() {
 
       const diff = data.close - data.open;
       const pct = (diff / data.open) * 100;
+
+      // SOLUCIÓN 3: Recuperamos los cálculos de las Medias Móviles para el Tooltip
+      const calcValues = {};
+      if (indicatorsRef.current.sma200) {
+        const val = param.seriesData.get(indicatorsRef.current.sma200);
+        calcValues.sma200 = val ? formatCurrency(val.value) : '-';
+      }
+      if (indicatorsRef.current.sma50) {
+        const val = param.seriesData.get(indicatorsRef.current.sma50);
+        calcValues.sma50 = val ? formatCurrency(val.value) : '-';
+      }
+      if (indicatorsRef.current.ema21) {
+        const val = param.seriesData.get(indicatorsRef.current.ema21);
+        calcValues.ema21 = val ? formatCurrency(val.value) : '-';
+      }
+      if (indicatorsRef.current.ema10) {
+        const val = param.seriesData.get(indicatorsRef.current.ema10);
+        calcValues.ema10 = val ? formatCurrency(val.value) : '-';
+      }
+
       setTooltipData({
         x: param.point.x,
         y: param.point.y,
@@ -234,7 +252,8 @@ export default function App() {
         low: formatCurrency(data.low),
         close: formatCurrency(data.close),
         change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`,
-        isUp: diff >= 0
+        isUp: diff >= 0,
+        ma: calcValues // Se inyectan en el estado del Tooltip
       });
     });
 
@@ -277,10 +296,8 @@ export default function App() {
     syncSeries('ema10', showEMA10, calculateEMA(chartData, 10), '#06b6d4');
   }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
-  // SOLUCIÓN 2 y 5: Eventos de dibujo traduciendo Píxeles a Lógica del gráfico
   const handleMouseDown = (e) => {
-    if (activeTool === 'pointer' || activeTool === 'eraser') return;
-    if (activeTool === 'text') return; // El texto lo manejamos en el click
+    if (activeTool === 'pointer' || activeTool === 'eraser' || activeTool === 'text') return;
     e.stopPropagation();
     
     const rect = e.currentTarget.getBoundingClientRect();
@@ -309,7 +326,6 @@ export default function App() {
     const logical = chartRef.current.timeScale().coordinateToLogical(x);
     const price = seriesRef.current.coordinateToPrice(y);
 
-    // Si estamos arrastrando un texto (Solución 5)
     if (draggingTextId) {
       setDrawings(prev => prev.map(d => d.id === draggingTextId ? { ...d, logical1: logical, price1: price } : d));
       return;
@@ -335,7 +351,7 @@ export default function App() {
 
       const textVal = prompt("Ingrese el texto:", "Zona de interés");
       if (textVal) setDrawings(prev => [...prev, { id: Date.now(), type: 'text', logical1: logical, price1: price, text: textVal }]);
-      setActiveTool("pointer"); // Volver a puntero automático para permitir mover el texto rápido
+      setActiveTool("pointer"); 
     }
   };
 
@@ -344,7 +360,6 @@ export default function App() {
     setDrawings(prev => prev.filter(d => d.id !== id));
   };
 
-  // Helper para renderizar los trazos basándose en las coordenadas del chart actual
   const renderDrawing = (d) => {
     if (!chartRef.current || !seriesRef.current) return null;
     const timeScale = chartRef.current.timeScale();
@@ -359,7 +374,7 @@ export default function App() {
       y2 = series.priceToCoordinate(d.price2);
     }
 
-    if (x1 === null || y1 === null) return null; // Fuera de visión profunda
+    if (x1 === null || y1 === null) return null; 
 
     const commonProps = {
       style: { pointerEvents: activeTool === 'eraser' ? 'auto' : 'none' },
@@ -378,7 +393,6 @@ export default function App() {
       );
     }
     if (d.type === 'ruler') {
-      // SOLUCIÓN 4: Medir rango dinámico de color
       const isUp = d.price2 >= d.price1;
       const rColor = isUp ? '#38761D' : '#FF6966';
       
@@ -399,13 +413,22 @@ export default function App() {
       );
     }
     if (d.type === 'text') {
-      // SOLUCIÓN 5: Texto con caja seleccionable y arrastrable
       const isPointer = activeTool === 'pointer';
       return (
         <g 
           key={d.id}
           onMouseDown={(e) => { 
             if(isPointer) { e.stopPropagation(); setDraggingTextId(d.id); } 
+          }}
+          // SOLUCIÓN 1: Evento de Doble Clic para editar
+          onDoubleClick={(e) => {
+            if (isPointer) {
+              e.stopPropagation();
+              const newText = prompt("Editar texto:", d.text);
+              if (newText) {
+                setDrawings(prev => prev.map(item => item.id === d.id ? { ...item, text: newText } : item));
+              }
+            }
           }}
           className={`${isPointer ? 'cursor-move' : ''} ${activeTool === 'eraser' ? 'cursor-pointer hover:opacity-50' : ''}`}
           style={{ pointerEvents: (isPointer || activeTool === 'eraser') ? 'auto' : 'none' }}
@@ -527,6 +550,9 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-1.5">
                 <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 200</button>
                 <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 50</button>
+                {/* SOLUCIÓN 2: Regresan los botones de las Medias Exponenciales (EMA) */}
+                <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>EMA 21</button>
+                <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>EMA 10</button>
               </div>
             </div>
 
@@ -534,7 +560,6 @@ export default function App() {
               <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800/60 bg-slate-900/30 items-center justify-start z-20 overflow-x-auto">
                 <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
                 
-                {/* SOLUCIÓN 3: Contenedor con Color Picker para la herramienta Lápiz */}
                 <div className={`flex items-center gap-1 p-1 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800' : 'hover:bg-slate-700'}`}>
                   <button onClick={() => setActiveTool("pencil")} className={`p-1 transition ${activeTool === 'pencil' ? 'text-emerald-400' : 'text-slate-400 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
                   {activeTool === 'pencil' && (
@@ -577,11 +602,21 @@ export default function App() {
                         <div className={`mt-1.5 pt-1 border-t border-slate-800 text-right font-bold ${tooltipData.isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {tooltipData.change}
                         </div>
+                        
+                        {/* SOLUCIÓN 3: Bloque visual que muestra las Medias en el Tooltip si están activadas */}
+                        {(showSMA200 || showSMA50 || showEMA21 || showEMA10) && (
+                          <div className="mt-1.5 pt-1.5 border-t border-slate-800 space-y-0.5">
+                            {showSMA200 && <div className="flex justify-between text-amber-300"><span>SMA 200:</span> <span>{tooltipData.ma.sma200}</span></div>}
+                            {showSMA50 && <div className="flex justify-between text-blue-300"><span>SMA 50:</span> <span>{tooltipData.ma.sma50}</span></div>}
+                            {showEMA21 && <div className="flex justify-between text-pink-300"><span>EMA 21:</span> <span>{tooltipData.ma.ema21}</span></div>}
+                            {showEMA10 && <div className="flex justify-between text-cyan-300"><span>EMA 10:</span> <span>{tooltipData.ma.ema10}</span></div>}
+                          </div>
+                        )}
+
                       </div>
                     )}
                   </div>
 
-                  {/* CAPA DE DIBUJO SVG (AHORA ANCLADA A LA LÓGICA DEL GRÁFICO) */}
                   <div className="absolute inset-0 z-10 pointer-events-none overflow-hidden" onMouseUp={handleMouseUp} onMouseMove={handleMouseMove}>
                     <svg className="w-full h-full">
                       <defs>
@@ -596,10 +631,7 @@ export default function App() {
                         </marker>
                       </defs>
                       
-                      {/* Renderizar dibujos guardados */}
                       {drawings.map(renderDrawing)}
-
-                      {/* Renderizar dibujo actual en curso */}
                       {currentDrawing && renderDrawing(currentDrawing)}
                     </svg>
                   </div>
