@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createChart, LineStyle } from 'lightweight-charts';
 import { 
-  TrendingUp, Calculator, BarChart2, AlertCircle, 
-  MousePointer2, Pencil, Type, Ruler, Trash2, Search, Loader2, Eraser 
+  TrendingUp, Calculator, BarChart2, Search, Loader2, 
+  MousePointer2, Pencil, Type, Ruler, Trash2, Eraser 
 } from 'lucide-react';
 
 // --- UTILIDADES DE FORMATEO ---
@@ -61,13 +61,16 @@ export default function App() {
   const [activeMenu, setActiveMenu] = useState(1);
   const [tickerInput, setTickerInput] = useState("AAPL");
   const [currentTicker, setCurrentTicker] = useState("AAPL");
-  const [activeTool, setActiveTool] = useState("pointer"); // Herramientas: pointer, pencil, text, ruler, eraser
+  const [activeTool, setActiveTool] = useState("pointer");
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [chartData, setChartData] = useState([]);
   
   // Dibujos e interacción
   const [drawings, setDrawings] = useState([]);
   const [currentDrawing, setCurrentDrawing] = useState(null);
+  const [trendLineColor, setTrendLineColor] = useState("#38bdf8"); // Color por defecto de línea
+  const [draggingTextId, setDraggingTextId] = useState(null); // ID del texto siendo arrastrado
+  const [chartSync, setChartSync] = useState(0); // Trigger para re-renderizar SVG al mover gráfico
 
   // Estados de Indicadores
   const [showSMA200, setShowSMA200] = useState(false);
@@ -124,6 +127,7 @@ export default function App() {
     const fetchRealMarketData = async () => {
       setIsLoadingData(true);
       try {
+        // SOLUCIÓN 1: Eliminado el range=5y. Queda como estaba.
         const response = await fetch(`/api/finance?symbol=${currentTicker}`);
         const json = await response.json();
         
@@ -186,34 +190,31 @@ export default function App() {
     });
 
     const series = chart.addCandlestickSeries({
-      upColor: '#10b981', downColor: '#f43f5e', 
-      borderVisible: false, 
-      wickUpColor: '#10b981', wickDownColor: '#f43f5e'
+      upColor: '#38761D', downColor: '#FF6966', borderVisible: false, 
+      wickUpColor: '#38761D', wickDownColor: '#FF6966',
+      lastValueVisible: false, priceLineVisible: false
     });
 
     chartRef.current = chart;
     seriesRef.current = series;
 
+    // Actualizar los dibujos cuando el usuario hace scroll/zoom en el gráfico
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => setChartSync(Date.now()));
     chart.subscribeCrosshairMove((param) => {
-      // Validamos que exista data y no estemos fuera de los límites de la serie
+      setChartSync(Date.now()); // Forza re-render para mantener dibujos sincronizados en paneos de Y-axis
+      
       if (!param.time || !param.point || !param.seriesData.get(series)) {
         setTooltipData(null);
         return;
       }
       
       const data = param.seriesData.get(series);
-      
-      // SOLUCIÓN 4: Comprobar si el cursor está sobre la vela (Y-axis)
       const yHigh = series.priceToCoordinate(data.high);
       const yLow = series.priceToCoordinate(data.low);
       
-      if (yHigh === null || yLow === null) {
-        setTooltipData(null);
-        return;
-      }
+      if (yHigh === null || yLow === null) return setTooltipData(null);
 
-      // En Lightweight, el eje Y va de arriba hacia abajo (yHigh suele ser menor que yLow)
-      const topY = Math.min(yHigh, yLow) - 5; // 5px de tolerancia
+      const topY = Math.min(yHigh, yLow) - 5; 
       const bottomY = Math.max(yHigh, yLow) + 5;
 
       if (param.point.y < topY || param.point.y > bottomY) {
@@ -223,25 +224,6 @@ export default function App() {
 
       const diff = data.close - data.open;
       const pct = (diff / data.open) * 100;
-
-      const calcValues = {};
-      if (indicatorsRef.current.sma200) {
-        const val = param.seriesData.get(indicatorsRef.current.sma200);
-        calcValues.sma200 = val ? formatCurrency(val.value) : '-';
-      }
-      if (indicatorsRef.current.sma50) {
-        const val = param.seriesData.get(indicatorsRef.current.sma50);
-        calcValues.sma50 = val ? formatCurrency(val.value) : '-';
-      }
-      if (indicatorsRef.current.ema21) {
-        const val = param.seriesData.get(indicatorsRef.current.ema21);
-        calcValues.ema21 = val ? formatCurrency(val.value) : '-';
-      }
-      if (indicatorsRef.current.ema10) {
-        const val = param.seriesData.get(indicatorsRef.current.ema10);
-        calcValues.ema10 = val ? formatCurrency(val.value) : '-';
-      }
-
       setTooltipData({
         x: param.point.x,
         y: param.point.y,
@@ -252,15 +234,12 @@ export default function App() {
         low: formatCurrency(data.low),
         close: formatCurrency(data.close),
         change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`,
-        isUp: diff >= 0,
-        ma: calcValues
+        isUp: diff >= 0
       });
     });
 
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
-      }
+      if (chartContainerRef.current) chart.applyOptions({ width: chartContainerRef.current.clientWidth });
     };
     window.addEventListener('resize', handleResize);
 
@@ -269,7 +248,6 @@ export default function App() {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
-      // SOLUCIÓN 2: Limpiar referencias para evitar errores al cambiar el ticker (Object is disposed)
       indicatorsRef.current = {};
       linesRef.current = {};
     };
@@ -278,89 +256,72 @@ export default function App() {
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current || chartData.length === 0) return;
     const chart = chartRef.current;
-    
     seriesRef.current.setData(chartData);
 
     const syncSeries = (key, show, data, color) => {
       if (show) {
         if (!indicatorsRef.current[key]) {
-          indicatorsRef.current[key] = chart.addLineSeries({ 
-            color, 
-            lineWidth: 1.5, 
-            priceLineVisible: false, 
-            lastValueVisible: false,
-            crosshairMarkerVisible: false
-          });
+          indicatorsRef.current[key] = chart.addLineSeries({ color, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
         }
         indicatorsRef.current[key].setData(data);
       } else {
         if (indicatorsRef.current[key] && chartRef.current) {
-          try {
-            // Manejo de errores adicional preventivo (Value is undefined)
-            chart.removeSeries(indicatorsRef.current[key]);
-          } catch (error) {
-            console.warn("La serie ya fue eliminada o el gráfico fue destruido.", error);
-          }
+          try { chart.removeSeries(indicatorsRef.current[key]); } catch (e) {}
           delete indicatorsRef.current[key];
         }
       }
     };
-
     syncSeries('sma200', showSMA200, calculateSMA(chartData, 200), '#f59e0b');
     syncSeries('sma50', showSMA50, calculateSMA(chartData, 50), '#3b82f6');
     syncSeries('ema21', showEMA21, calculateEMA(chartData, 21), '#ec4899');
     syncSeries('ema10', showEMA10, calculateEMA(chartData, 10), '#06b6d4');
-
   }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
-  useEffect(() => {
-    if (!seriesRef.current) return;
-    const series = seriesRef.current;
-
-    if (linesRef.current.entry) series.removePriceLine(linesRef.current.entry);
-    if (linesRef.current.sl) series.removePriceLine(linesRef.current.sl);
-    if (linesRef.current.tp) series.removePriceLine(linesRef.current.tp);
-
-    if (numEntryPrice > 0) {
-      linesRef.current.entry = series.createPriceLine({
-        price: numEntryPrice, color: '#38bdf8', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
-      });
-    }
-    if (numStopLoss > 0) {
-      linesRef.current.sl = series.createPriceLine({
-        price: numStopLoss, color: '#f43f5e', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
-      });
-    }
-    if (numTakeProfit > 0) {
-      linesRef.current.tp = series.createPriceLine({
-        price: numTakeProfit, color: '#10b981', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '',
-      });
-    }
-  }, [numEntryPrice, numStopLoss, numTakeProfit]);
-
+  // SOLUCIÓN 2 y 5: Eventos de dibujo traduciendo Píxeles a Lógica del gráfico
   const handleMouseDown = (e) => {
-    if (activeTool === 'pointer' || activeTool === 'text' || activeTool === 'eraser') return;
+    if (activeTool === 'pointer' || activeTool === 'eraser') return;
+    if (activeTool === 'text') return; // El texto lo manejamos en el click
     e.stopPropagation();
+    
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    const logical = chartRef.current.timeScale().coordinateToLogical(x);
+    const price = seriesRef.current.coordinateToPrice(y);
+
     if (!currentDrawing) {
-      setCurrentDrawing({ type: activeTool, x1: x, y1: y, x2: x, y2: y });
+      setCurrentDrawing({ type: activeTool, color: trendLineColor, logical1: logical, price1: price, logical2: logical, price2: price });
     } else {
-      const finished = { ...currentDrawing, id: Date.now(), x2: x, y2: y };
+      const finished = { ...currentDrawing, id: Date.now(), logical2: logical, price2: price };
       setDrawings(prev => [...prev, finished]);
       setCurrentDrawing(null);
     }
   };
 
   const handleMouseMove = (e) => {
-    if (!currentDrawing) return;
-    e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    setCurrentDrawing(prev => ({ ...prev, x2: x, y2: y }));
+
+    if (!chartRef.current || !seriesRef.current) return;
+    
+    const logical = chartRef.current.timeScale().coordinateToLogical(x);
+    const price = seriesRef.current.coordinateToPrice(y);
+
+    // Si estamos arrastrando un texto (Solución 5)
+    if (draggingTextId) {
+      setDrawings(prev => prev.map(d => d.id === draggingTextId ? { ...d, logical1: logical, price1: price } : d));
+      return;
+    }
+
+    if (!currentDrawing) return;
+    e.stopPropagation();
+    setCurrentDrawing(prev => ({ ...prev, logical2: logical, price2: price }));
+  };
+
+  const handleMouseUp = () => {
+    if (draggingTextId) setDraggingTextId(null);
   };
 
   const handleChartClick = (e) => {
@@ -368,14 +329,96 @@ export default function App() {
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
+      
+      const logical = chartRef.current.timeScale().coordinateToLogical(x);
+      const price = seriesRef.current.coordinateToPrice(y);
+
       const textVal = prompt("Ingrese el texto:", "Zona de interés");
-      if (textVal) setDrawings(prev => [...prev, { id: Date.now(), type: 'text', x, y, text: textVal }]);
+      if (textVal) setDrawings(prev => [...prev, { id: Date.now(), type: 'text', logical1: logical, price1: price, text: textVal }]);
+      setActiveTool("pointer"); // Volver a puntero automático para permitir mover el texto rápido
     }
   };
 
   const deleteDrawing = (id, e) => {
     if (e) e.stopPropagation();
     setDrawings(prev => prev.filter(d => d.id !== id));
+  };
+
+  // Helper para renderizar los trazos basándose en las coordenadas del chart actual
+  const renderDrawing = (d) => {
+    if (!chartRef.current || !seriesRef.current) return null;
+    const timeScale = chartRef.current.timeScale();
+    const series = seriesRef.current;
+
+    const x1 = timeScale.logicalToCoordinate(d.logical1);
+    const y1 = series.priceToCoordinate(d.price1);
+    
+    let x2 = x1, y2 = y1;
+    if (d.logical2 !== undefined) {
+      x2 = timeScale.logicalToCoordinate(d.logical2);
+      y2 = series.priceToCoordinate(d.price2);
+    }
+
+    if (x1 === null || y1 === null) return null; // Fuera de visión profunda
+
+    const commonProps = {
+      style: { pointerEvents: activeTool === 'eraser' ? 'auto' : 'none' },
+      className: activeTool === 'eraser' ? 'cursor-pointer hover:opacity-50 transition-opacity' : '',
+      onClick: (e) => { if (activeTool === 'eraser') deleteDrawing(d.id, e); }
+    };
+
+    if (d.type === 'pencil') {
+      return (
+        <g key={d.id} {...commonProps}>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="15" />
+          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={d.color || '#38bdf8'} strokeWidth="2" markerEnd="url(#arrow)" />
+          <circle cx={x1} cy={y1} r="3" fill={d.color || '#38bdf8'} />
+          <circle cx={x2} cy={y2} r="3" fill={d.color || '#38bdf8'} />
+        </g>
+      );
+    }
+    if (d.type === 'ruler') {
+      // SOLUCIÓN 4: Medir rango dinámico de color
+      const isUp = d.price2 >= d.price1;
+      const rColor = isUp ? '#38761D' : '#FF6966';
+      
+      const pctDiff = ((d.price2 - d.price1) / Math.abs(d.price1 || 1)) * 100;
+      const midX = (x1 + x2) / 2;
+      const midY = (y1 + y2) / 2;
+      return (
+        <g key={d.id} {...commonProps}>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="15" />
+          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={rColor} strokeWidth="2" strokeDasharray="4" markerEnd={`url(#arrow-${isUp ? 'up' : 'down'})`} />
+          <circle cx={x1} cy={y1} r="3" fill={rColor} />
+          <circle cx={x2} cy={y2} r="3" fill={rColor} />
+          <rect x={midX - 30} y={midY - 12} width="60" height="20" rx="4" fill="#0f172a" stroke={rColor} strokeWidth="1" />
+          <text x={midX} y={midY + 2} fill={rColor} fontSize="10" fontWeight="bold" textAnchor="middle">
+            {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(2)}%
+          </text>
+        </g>
+      );
+    }
+    if (d.type === 'text') {
+      // SOLUCIÓN 5: Texto con caja seleccionable y arrastrable
+      const isPointer = activeTool === 'pointer';
+      return (
+        <g 
+          key={d.id}
+          onMouseDown={(e) => { 
+            if(isPointer) { e.stopPropagation(); setDraggingTextId(d.id); } 
+          }}
+          className={`${isPointer ? 'cursor-move' : ''} ${activeTool === 'eraser' ? 'cursor-pointer hover:opacity-50' : ''}`}
+          style={{ pointerEvents: (isPointer || activeTool === 'eraser') ? 'auto' : 'none' }}
+          onClick={(e) => { if (activeTool === 'eraser') deleteDrawing(d.id, e); }}
+        >
+          <rect x={x1 - 10} y={y1 - 16} width={(d.text.length * 7) + 20} height={24} rx="4" fill="#0f172a80" stroke="#38bdf8" strokeWidth="1" strokeDasharray="2" className="opacity-50 hover:opacity-100 transition-opacity" />
+          <text x={x1} y={y1} fill="#38bdf8" fontSize="11" fontWeight="bold">
+            {d.text}
+          </text>
+        </g>
+      );
+    }
+    return null;
   };
 
   return (
@@ -391,7 +434,6 @@ export default function App() {
               <p className="text-slate-500 text-xs">Gestión de Riesgo & Gráficos Profesionales</p>
             </div>
           </div>
-
           <div className="flex p-1 bg-slate-900 rounded-xl w-full md:w-auto border border-slate-800">
             <button onClick={() => setActiveMenu(1)} className={`flex-1 md:w-40 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg transition-all ${activeMenu === 1 ? 'bg-slate-800 text-white shadow-sm border border-slate-700' : 'text-slate-400 hover:text-slate-200'}`}>
               <BarChart2 className="w-3.5 h-3.5" /> Evaluar Posición
@@ -435,7 +477,6 @@ export default function App() {
                       <input type="text" inputMode="decimal" value={formatInputDisplay(stopLoss)} onChange={handleNumberChange(setStopLoss)} className="w-full px-2 py-1.5 bg-slate-900 border border-rose-900/50 rounded-xl text-rose-100 text-sm focus:ring-2 focus:ring-rose-500" />
                     </div>
                   </div>
-
                   {activeMenu === 1 && (
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -459,18 +500,10 @@ export default function App() {
                   <h4 className="text-2xl font-bold text-rose-100">${formatCurrency(m1_totalRisk)}</h4>
                   <p className="text-[10px] text-rose-400/80 mt-1">{formatCurrency(m1_actualRiskPercent)}% del capital</p>
                 </div>
-
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 border-l-4 border-l-emerald-500 shadow-lg">
                   <p className="text-slate-400 text-xs mb-1">Ganancia Proyectada</p>
                   <h4 className="text-2xl font-bold text-emerald-100">${formatCurrency(m1_projectedProfit)}</h4>
                 </div>
-              </div>
-            )}
-
-            {!isInvalidLong && activeMenu === 2 && (
-              <div className="bg-gradient-to-br from-emerald-600 to-emerald-900 border border-emerald-800 rounded-2xl p-5 shadow-xl">
-                <p className="text-emerald-100 text-xs font-medium mb-1">Acciones a Comprar</p>
-                <h3 className="text-4xl font-bold text-white">{formatInputDisplay(Math.floor(numCapital * (numRiskPercent/100) / (numEntryPrice - numStopLoss)))}</h3>
               </div>
             )}
           </div>
@@ -482,11 +515,8 @@ export default function App() {
               <form onSubmit={handleSearchTicker} className="flex items-center gap-2">
                 <div className="relative">
                   <input 
-                     type="text" 
-                     value={tickerInput}
-                     onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
-                     className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-24 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider"
-                     placeholder="AAPL"
+                     type="text" value={tickerInput} onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
+                     className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-24 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider" placeholder="AAPL"
                   />
                   <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2" />
                 </div>
@@ -494,28 +524,31 @@ export default function App() {
                   {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
                 </button>
               </form>
-
               <div className="flex flex-wrap items-center gap-1.5">
                 <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 200</button>
                 <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 50</button>
-                <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>EMA 21</button>
-                <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>EMA 10</button>
               </div>
             </div>
 
             <div className="flex flex-col md:flex-row relative">
-              <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800/60 bg-slate-900/30 items-center justify-start z-20">
+              <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800/60 bg-slate-900/30 items-center justify-start z-20 overflow-x-auto">
                 <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
-                <button onClick={() => setActiveTool("pencil")} className={`p-2 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
+                
+                {/* SOLUCIÓN 3: Contenedor con Color Picker para la herramienta Lápiz */}
+                <div className={`flex items-center gap-1 p-1 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800' : 'hover:bg-slate-700'}`}>
+                  <button onClick={() => setActiveTool("pencil")} className={`p-1 transition ${activeTool === 'pencil' ? 'text-emerald-400' : 'text-slate-400 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
+                  {activeTool === 'pencil' && (
+                    <input type="color" value={trendLineColor} onChange={(e) => setTrendLineColor(e.target.value)} className="w-4 h-4 rounded cursor-pointer bg-transparent border-0 p-0" title="Color de la línea" />
+                  )}
+                </div>
+                
                 <button onClick={() => setActiveTool("text")} className={`p-2 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-4 h-4" /></button>
                 <button onClick={() => setActiveTool("ruler")} className={`p-2 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-4 h-4" /></button>
-                <div className="w-px h-5 md:w-5 md:h-px bg-slate-800 my-1"></div>
-                {/* SOLUCIÓN 3: Se agregó el botón de Eraser */}
+                <div className="w-px h-5 md:w-5 md:h-px bg-slate-800 my-1 shrink-0"></div>
                 <button onClick={() => setActiveTool("eraser")} className={`p-2 rounded-lg transition ${activeTool === 'eraser' ? 'bg-rose-500/20 text-rose-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Borrar Selección"><Eraser className="w-4 h-4" /></button>
-                <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition mt-auto" title="Limpiar todo"><Trash2 className="w-4 h-4" /></button>
+                <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition md:mt-auto" title="Limpiar todo"><Trash2 className="w-4 h-4" /></button>
               </div>
 
-              {/* Contenedor del Chart */}
               <div className="flex-1 p-1 relative flex gap-3">
                 <div className="flex-1 relative">
                   <div 
@@ -523,121 +556,59 @@ export default function App() {
                     onClick={handleChartClick}
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
-                    className="w-full h-full min-h-[500px] cursor-crosshair relative"
+                    onMouseUp={handleMouseUp}
+                    className={`w-full h-full min-h-[500px] relative ${activeTool === 'pointer' ? 'cursor-default' : 'cursor-crosshair'}`}
                   >
                     {tooltipData && (
-                      <div 
-                        style={{ 
-                          left: `${Math.min(Math.max(10, tooltipData.x + 15), 450)}px`, 
-                          top: `${Math.max(10, tooltipData.y - 60)}px` 
-                        }}
+                      <div style={{ left: `${Math.min(Math.max(10, tooltipData.x + 15), 450)}px`, top: `${Math.max(10, tooltipData.y - 60)}px` }}
                         className="absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700/80 rounded-xl p-2.5 shadow-2xl backdrop-blur-md text-[11px] font-mono min-w-[150px]"
                       >
                         <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5 font-sans font-bold text-white">
                           <span className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
-                            {tooltipData.ticker}
+                            <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>{tooltipData.ticker}
                           </span>
-                          <span className="text-[10px] text-slate-400">{tooltipData.time}</span>
                         </div>
                         <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                          <div className="text-slate-400">Close</div>
-                          <div className="text-right text-white font-semibold">{tooltipData.close}</div>
-                          <div className="text-slate-400">Open</div>
-                          <div className="text-right text-white">{tooltipData.open}</div>
-                          <div className="text-slate-400">Low</div>
-                          <div className="text-right text-rose-400">{tooltipData.low}</div>
-                          <div className="text-slate-400">High</div>
-                          <div className="text-right text-emerald-400">{tooltipData.high}</div>
+                          <div className="text-slate-400">Close</div><div className="text-right text-white font-semibold">{tooltipData.close}</div>
+                          <div className="text-slate-400">Open</div><div className="text-right text-white">{tooltipData.open}</div>
+                          <div className="text-slate-400">Low</div><div className="text-right text-rose-400">{tooltipData.low}</div>
+                          <div className="text-slate-400">High</div><div className="text-right text-emerald-400">{tooltipData.high}</div>
                         </div>
                         <div className={`mt-1.5 pt-1 border-t border-slate-800 text-right font-bold ${tooltipData.isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {tooltipData.change}
                         </div>
-                        
-                        {(showSMA200 || showSMA50 || showEMA21 || showEMA10) && (
-                          <div className="mt-1.5 pt-1.5 border-t border-slate-800 space-y-0.5">
-                            {showSMA200 && <div className="flex justify-between text-amber-300"><span>SMA 200:</span> <span>{tooltipData.ma.sma200}</span></div>}
-                            {showSMA50 && <div className="flex justify-between text-blue-300"><span>SMA 50:</span> <span>{tooltipData.ma.sma50}</span></div>}
-                            {showEMA21 && <div className="flex justify-between text-pink-300"><span>EMA 21:</span> <span>{tooltipData.ma.ema21}</span></div>}
-                            {showEMA10 && <div className="flex justify-between text-cyan-300"><span>EMA 10:</span> <span>{tooltipData.ma.ema10}</span></div>}
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
 
-                  <div className="absolute inset-0 z-10 pointer-events-none">
-                    <svg className="w-full h-full overflow-visible">
+                  {/* CAPA DE DIBUJO SVG (AHORA ANCLADA A LA LÓGICA DEL GRÁFICO) */}
+                  <div className="absolute inset-0 z-10 pointer-events-none overflow-hidden" onMouseUp={handleMouseUp} onMouseMove={handleMouseMove}>
+                    <svg className="w-full h-full">
                       <defs>
                         <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
+                          <path d="M 0 0 L 10 5 L 0 10 z" fill={trendLineColor} />
+                        </marker>
+                        <marker id="arrow-up" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                          <path d="M 0 0 L 10 5 L 0 10 z" fill="#38761D" />
+                        </marker>
+                        <marker id="arrow-down" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                          <path d="M 0 0 L 10 5 L 0 10 z" fill="#FF6966" />
                         </marker>
                       </defs>
-                      {drawings.map(d => {
-                        const commonProps = {
-                          style: { pointerEvents: activeTool === 'eraser' ? 'auto' : 'none' },
-                          className: activeTool === 'eraser' ? 'cursor-pointer hover:opacity-50 transition-opacity' : '',
-                          onClick: (e) => {
-                            if (activeTool === 'eraser') deleteDrawing(d.id, e);
-                          }
-                        };
+                      
+                      {/* Renderizar dibujos guardados */}
+                      {drawings.map(renderDrawing)}
 
-                        if (d.type === 'pencil') {
-                          return (
-                            <g key={d.id} {...commonProps}>
-                              {/* Hitbox invisible más ancha para facilitar el click con el borrador */}
-                              <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="transparent" strokeWidth="15" />
-                              <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#38bdf8" strokeWidth="2" markerEnd="url(#arrow)" />
-                              <circle cx={d.x1} cy={d.y1} r="3" fill="#38bdf8" />
-                              <circle cx={d.x2} cy={d.y2} r="3" fill="#38bdf8" />
-                            </g>
-                          );
-                        }
-                        if (d.type === 'ruler') {
-                          const pctDiff = ((d.y1 - d.y2) / Math.abs(d.y1 || 1)) * 100;
-                          const midX = (d.x1 + d.x2) / 2;
-                          const midY = (d.y1 + d.y2) / 2;
-                          return (
-                            <g key={d.id} {...commonProps}>
-                              <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="transparent" strokeWidth="15" />
-                              <line x1={d.x1} y1={d.y1} x2={d.x2} y2={d.y2} stroke="#10b981" strokeWidth="2" strokeDasharray="4" markerEnd="url(#arrow)" />
-                              <circle cx={d.x1} cy={d.y1} r="3" fill="#10b981" />
-                              <circle cx={d.x2} cy={d.y2} r="3" fill="#10b981" />
-                              <rect x={midX - 25} y={midY - 12} width="50" height="20" rx="4" fill="#0f172a" stroke="#10b981" strokeWidth="1" />
-                              <text x={midX} y={midY + 2} fill="#10b981" fontSize="10" fontWeight="bold" textAnchor="middle">
-                                {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(2)}%
-                              </text>
-                            </g>
-                          );
-                        }
-                        if (d.type === 'text') {
-                          return (
-                            <text key={d.id} x={d.x} y={d.y} fill="#38bdf8" fontSize="11" fontWeight="bold" {...commonProps}>
-                              {d.text}
-                            </text>
-                          );
-                        }
-                        return null;
-                      })}
-
-                      {currentDrawing && currentDrawing.type === 'pencil' && (
-                        <line x1={currentDrawing.x1} y1={currentDrawing.y1} x2={currentDrawing.x2} y2={currentDrawing.y2} stroke="#38bdf8" strokeWidth="2" markerEnd="url(#arrow)" />
-                      )}
-                      {currentDrawing && currentDrawing.type === 'ruler' && (
-                        <line x1={currentDrawing.x1} y1={currentDrawing.y1} x2={currentDrawing.x2} y2={currentDrawing.y2} stroke="#10b981" strokeWidth="2" strokeDasharray="4" markerEnd="url(#arrow)" />
-                      )}
+                      {/* Renderizar dibujo actual en curso */}
+                      {currentDrawing && renderDrawing(currentDrawing)}
                     </svg>
                   </div>
-                  
-                  {/* SOLUCIÓN 1: El div de "Niveles Clave" que estaba debajo fue eliminado por completo */}
                 </div>
               </div>
             </div>
 
           </div>
-
         </div>
-
       </div>
     </div>
   );

@@ -7,7 +7,9 @@ export default async function handler(req, res) {
   const { symbol = 'AAPL' } = req.query;
 
   try {
-    const period1 = Math.floor(Date.now() / 1000) - 365 * 24 * 60 * 60; // 1 año atrás
+    const period1 = 0;// period1 = 0 representa el inicio del tiempo Unix (1 de Enero de 1970).
+                      // Esto obliga a Yahoo Finance a traer los datos desde la salida a bolsa (IPO) de la empresa.
+    const period1 = 0;
     const period2 = Math.floor(Date.now() / 1000);
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?period1=${period1}&period2=${period2}&interval=1d`;
 
