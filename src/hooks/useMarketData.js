@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-export const useMarketData = (currentTicker) => {
+export const useMarketData = (currentTicker, interval) => {
   const [chartData, setChartData] = useState([]);
   const [fundamentals, setFundamentals] = useState(null);
   const [isLoadingData, setIsLoadingData] = useState(false);
@@ -12,7 +12,7 @@ export const useMarketData = (currentTicker) => {
     const fetchRealMarketData = async () => {
       setIsLoadingData(true);
       try {
-        const response = await fetch(`/api/finance?symbol=${currentTicker}`);
+        const response = await fetch(`/api/finance?symbol=${currentTicker}&interval=${interval}`);
         const json = await response.json();
         
         if (json.error) throw new Error(json.error);

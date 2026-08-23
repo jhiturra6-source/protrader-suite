@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createChart, LineStyle } from 'lightweight-charts';
 import { 
-  TrendingUp, Calculator, BarChart2, Search, Loader2, 
-  MousePointer2, Pencil, Type, Ruler, Trash2, Eraser 
+  TrendingUp, Calculator, BarChart2, Search, Loader2 
 } from 'lucide-react';
 import { useMarketData } from './hooks/useMarketData';
+import Toolbar from './components/Toolbar/Toolbar';
 
 // --- UTILIDADES DE FORMATEO ---
 const formatInputDisplay = (val) => {
@@ -158,15 +158,29 @@ export default function App() {
   const [activeMenu, setActiveMenu] = useState(1);
   const [tickerInput, setTickerInput] = useState("AAPL");
   const [currentTicker, setCurrentTicker] = useState("AAPL");
+  const [interval, setInterval] = useState("1d");
   const [activeTool, setActiveTool] = useState("pointer");
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [chartData, setChartData] = useState([]);
   const [fundamentals, setFundamentals] = useState(null);
   
-  const [drawings, setDrawings] = useState([]);
+  const [drawings, setDrawings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('protrader-drawings');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('protrader-drawings', JSON.stringify(drawings));
+  }, [drawings]);
+
   const [currentDrawing, setCurrentDrawing] = useState(null);
   const [trendLineColor, setTrendLineColor] = useState("#38bdf8"); 
   const [draggingTextId, setDraggingTextId] = useState(null); 
+  const [draggingHandle, setDraggingHandle] = useState(null); // { id, pointIndex }
   const [chartSync, setChartSync] = useState(0); 
 
   const [showSMA200, setShowSMA200] = useState(false);
@@ -183,7 +197,7 @@ export default function App() {
   const [capital, setCapital] = useState("10000");
   const [riskPercent, setRiskPercent] = useState("1,5");
   
-  const marketData = useMarketData(currentTicker);
+  const marketData = useMarketData(currentTicker, interval);
   const { entryPrice, setEntryPrice, stopLoss, setStopLoss, takeProfit, setTakeProfit } = marketData;
   
   useEffect(() => {
@@ -358,7 +372,18 @@ export default function App() {
   }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
 
   const handleMouseDown = (e) => {
-    if (activeTool === 'pointer' || activeTool === 'eraser' || activeTool === 'text') return;
+    if (activeTool === 'pointer') {
+      // Check if we clicked on a handle of an existing drawing
+      const target = e.target.closest('[data-handle]');
+      if (target) {
+        const { id, pointindex } = target.dataset;
+        setDraggingHandle({ id: Number(id), pointIndex: Number(pointindex) });
+        e.stopPropagation();
+        return;
+      }
+      return;
+    }
+    if (activeTool === 'eraser' || activeTool === 'text') return;
     e.stopPropagation();
     
     const rect = e.currentTarget.getBoundingClientRect();
@@ -387,6 +412,16 @@ export default function App() {
     const logical = chartRef.current.timeScale().coordinateToLogical(x);
     const price = seriesRef.current.coordinateToPrice(y);
 
+    if (draggingHandle) {
+      setDrawings(prev => prev.map(d => {
+        if (d.id !== draggingHandle.id) return d;
+        const keyLogical = draggingHandle.pointIndex === 1 ? 'logical1' : 'logical2';
+        const keyPrice = draggingHandle.pointIndex === 1 ? 'price1' : 'price2';
+        return { ...d, [keyLogical]: logical, [keyPrice]: price };
+      }));
+      return;
+    }
+
     if (draggingTextId) {
       setDrawings(prev => prev.map(d => d.id === draggingTextId ? { ...d, logical1: logical, price1: price } : d));
       return;
@@ -399,6 +434,7 @@ export default function App() {
 
   const handleMouseUp = () => {
     if (draggingTextId) setDraggingTextId(null);
+    if (draggingHandle) setDraggingHandle(null);
   };
 
   const handleChartClick = (e) => {
@@ -448,8 +484,8 @@ export default function App() {
         <g key={d.id} {...commonProps}>
           <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="15" />
           <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={d.color || '#38bdf8'} strokeWidth="2" markerEnd="url(#arrow)" />
-          <circle cx={x1} cy={y1} r="3" fill={d.color || '#38bdf8'} />
-          <circle cx={x2} cy={y2} r="3" fill={d.color || '#38bdf8'} />
+          <circle cx={x1} cy={y1} r="5" fill={d.color || '#38bdf8'} data-handle data-id={d.id} data-pointindex="1" className="cursor-grab" />
+          <circle cx={x2} cy={y2} r="5" fill={d.color || '#38bdf8'} data-handle data-id={d.id} data-pointindex="2" className="cursor-grab" />
         </g>
       );
     }
@@ -464,12 +500,25 @@ export default function App() {
         <g key={d.id} {...commonProps}>
           <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth="15" />
           <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={rColor} strokeWidth="2" strokeDasharray="4" markerEnd={`url(#arrow-${isUp ? 'up' : 'down'})`} />
-          <circle cx={x1} cy={y1} r="3" fill={rColor} />
-          <circle cx={x2} cy={y2} r="3" fill={rColor} />
+          <circle cx={x1} cy={y1} r="5" fill={rColor} data-handle data-id={d.id} data-pointindex="1" className="cursor-grab" />
+          <circle cx={x2} cy={y2} r="5" fill={rColor} data-handle data-id={d.id} data-pointindex="2" className="cursor-grab" />
           <rect x={midX - 30} y={midY - 12} width="60" height="20" rx="4" fill="#0f172a" stroke={rColor} strokeWidth="1" />
           <text x={midX} y={midY + 2} fill={rColor} fontSize="10" fontWeight="bold" textAnchor="middle">
             {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(2)}%
           </text>
+        </g>
+      );
+    }
+    if (d.type === 'rectangle') {
+      const rectX = Math.min(x1, x2);
+      const rectY = Math.min(y1, y2);
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      return (
+        <g key={d.id} {...commonProps}>
+          <rect x={rectX} y={rectY} width={width} height={height} fill={`${d.color || '#38bdf8'}20`} stroke={d.color || '#38bdf8'} strokeWidth="1.5" />
+          <circle cx={x1} cy={y1} r="5" fill={d.color || '#38bdf8'} data-handle data-id={d.id} data-pointindex="1" className="cursor-grab" />
+          <circle cx={x2} cy={y2} r="5" fill={d.color || '#38bdf8'} data-handle data-id={d.id} data-pointindex="2" className="cursor-grab" />
         </g>
       );
     }
@@ -604,11 +653,25 @@ export default function App() {
                   <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
                   <input type="text" value={tickerInput} onChange={(e) => setTickerInput(e.target.value)} placeholder="Símbolo (ej: AAPL)" className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500 uppercase" />
                 </div>
+                <div className="flex bg-slate-950 border border-slate-700 rounded-xl overflow-hidden">
+                  {['1d', '1wk', '1mo'].map((i) => (
+                    <button key={i} type="button" onClick={() => setInterval(i)} className={`px-3 py-1 text-xs font-medium uppercase transition-colors ${interval === i ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}>
+                      {i}
+                    </button>
+                  ))}
+                </div>
                 <button type="submit" className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium transition-colors">Buscar</button>
                 {isLoadingData && <Loader2 className="w-5 h-5 animate-spin text-emerald-400 my-auto" />}
               </form>
 
               <div className="relative">
+                <Toolbar 
+                  activeTool={activeTool} 
+                  setActiveTool={setActiveTool} 
+                  trendLineColor={trendLineColor} 
+                  setTrendLineColor={setTrendLineColor} 
+                  onClearDrawings={() => { setDrawings([]); setCurrentDrawing(null); }}
+                />
                 <div ref={chartContainerRef} className="w-full h-[500px] rounded-xl overflow-hidden" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onClick={handleChartClick}>
                   <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
                     <defs>
@@ -645,19 +708,6 @@ export default function App() {
                     )}
                   </div>
                 )}
-              </div>
-
-              <div className="flex gap-2 mt-4 flex-wrap">
-                <button onClick={() => setActiveTool('pointer')} className={`p-2 rounded-lg ${activeTool === 'pointer' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><MousePointer2 className="w-4 h-4" /></button>
-                <button onClick={() => setActiveTool('pencil')} className={`p-2 rounded-lg ${activeTool === 'pencil' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><Pencil className="w-4 h-4" /></button>
-                <button onClick={() => setActiveTool('ruler')} className={`p-2 rounded-lg ${activeTool === 'ruler' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><Ruler className="w-4 h-4" /></button>
-                <button onClick={() => setActiveTool('text')} className={`p-2 rounded-lg ${activeTool === 'text' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><Type className="w-4 h-4" /></button>
-                <button onClick={() => setActiveTool('eraser')} className={`p-2 rounded-lg ${activeTool === 'eraser' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><Eraser className="w-4 h-4" /></button>
-                
-                <div className="flex items-center gap-1 ml-2">
-                  <input type="color" value={trendLineColor} onChange={(e) => setTrendLineColor(e.target.value)} className="w-6 h-6 rounded bg-transparent border-0 cursor-pointer" />
-                </div>
-                <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="ml-auto px-3 py-1 bg-rose-900/50 text-rose-300 rounded-lg text-xs flex items-center gap-1 hover:bg-rose-900"><Trash2 className="w-3 h-3" /> Limpiar</button>
               </div>
             </div>
 

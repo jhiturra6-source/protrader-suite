@@ -90,9 +90,10 @@ export default async function handler(req, res) {
     });
   }
   
-  const { symbol } = req.query;
+  const { symbol, interval } = req.query;
   const safeSymbol = (symbol && symbol.trim()) ? symbol.toUpperCase() : 'AAPL';
-  const cacheKey = safeSymbol;
+  const safeInterval = (interval && ['1d', '1wk', '1mo'].includes(interval)) ? interval : '1d';
+  const cacheKey = `${safeSymbol}_${safeInterval}`;
   
   const cached = getCache(cacheKey);
   if (cached) {
@@ -101,11 +102,12 @@ export default async function handler(req, res) {
   }
   
   try {
-    const period1 = Math.floor(Date.now() / 1000) - (10 * 365 * 24 * 60 * 60);
+    // Ajustar periodo según intervalo
+    const period1 = Math.floor(Date.now() / 1000) - (interval === '1mo' ? 30 * 365 * 24 * 60 * 60 : 10 * 365 * 24 * 60 * 60);
     const period2 = Math.floor(Date.now() / 1000);
     
     // Fetch Chart Data
-    const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${cacheKey}?period1=${period1}&period2=${period2}&interval=1d`;
+    const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${safeSymbol}?period1=${period1}&period2=${period2}&interval=${safeInterval}`;
     
     // Fetch Fundamental Data (EPS)
     const fundamentalUrl = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${cacheKey}?modules=defaultKeyStatistics,earnings`;
