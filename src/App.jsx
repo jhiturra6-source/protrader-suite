@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createChart, LineStyle } from 'lightweight-charts';
-import { 
-  TrendingUp, Calculator, BarChart2, Search, Loader2 
-} from 'lucide-react';
+import { TrendingUp, Calculator, BarChart2, Search, Loader2 } from 'lucide-react';
 import { useMarketData } from './hooks/useMarketData';
 import Toolbar from './components/Toolbar/Toolbar';
+import ChartDashboard from './components/Chart/ChartDashboard';
 
 // --- UTILIDADES DE FORMATEO ---
 const formatInputDisplay = (val) => {
@@ -672,23 +670,22 @@ export default function App() {
                   setTrendLineColor={setTrendLineColor} 
                   onClearDrawings={() => { setDrawings([]); setCurrentDrawing(null); }}
                 />
-                <div ref={chartContainerRef} className="w-full h-[500px] rounded-xl overflow-hidden" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onClick={handleChartClick}>
-                  <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
-                    <defs>
-                      <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-                        <path d="M0,0 L0,6 L9,3 z" fill="#38bdf8" />
-                      </marker>
-                      <marker id="arrow-up" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-                        <path d="M0,0 L0,6 L9,3 z" fill="#38761D" />
-                      </marker>
-                      <marker id="arrow-down" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-                        <path d="M0,0 L0,6 L9,3 z" fill="#FF6966" />
-                      </marker>
-                    </defs>
-                    {drawings.map(renderDrawing)}
-                    {currentDrawing && renderDrawing({ ...currentDrawing, id: 'current' })}
-                  </svg>
-                </div>
+                  <ChartDashboard 
+                  chartData={chartData}
+                  ref={chartContainerRef}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onClick={handleChartClick}
+                  drawings={drawings}
+                  currentDrawing={currentDrawing}
+                  renderDrawing={renderDrawing}
+                  indicators={[
+                    showRSI && chartData.length > 0 && { title: "RSI (14)", data: calculateRSI(chartData), color: "#a855f7", min: 0, max: 100, overbought: 70, oversold: 30 },
+                    showStochastic && chartData.length > 0 && { title: "Stochastic %K", data: calculateStochastic(chartData).fastK, color: "#f97316", min: 0, max: 100, overbought: 80, oversold: 20 },
+                    showMACD && chartData.length > 0 && { title: "MACD (12, 26, 9)", data: calculateMACD(chartData).macdLine, color: "#6366f1", min: -20, max: 20, overbought: 10, oversold: -10 }
+                  ].filter(Boolean)}
+                />
 
                 {tooltipData && (
                   <div className="absolute z-10 bg-slate-900/95 border border-slate-700 rounded-xl p-3 text-xs shadow-2xl pointer-events-none" style={{ left: tooltipData.x + 15, top: tooltipData.y + 15, minWidth: '140px' }}>
