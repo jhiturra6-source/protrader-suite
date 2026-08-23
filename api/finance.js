@@ -11,7 +11,6 @@ const RATE_LIMIT = {
 const requestCounts = new Map();
 
 function getClientIp(req) {
-  // Vercel injects these headers
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
          req.headers['x-real-ip'] ||
          'unknown';
@@ -58,7 +57,6 @@ function setCache(key, data) {
 }
 
 export default async function handler(req, res) {
-  // CORS - restrict to our domain in production
   const origin = req.headers.origin;
   const allowedOrigin = process.env.VERCEL_URL 
     ? `https://${process.env.VERCEL_URL}` 
@@ -73,12 +71,10 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Vary', 'Origin');
   
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
   
-  // Rate limiting
   const ip = getClientIp(req);
   const rateLimit = checkRateLimit(ip);
   
@@ -98,7 +94,6 @@ export default async function handler(req, res) {
   const safeSymbol = (symbol && symbol.trim()) ? symbol.toUpperCase() : 'AAPL';
   const cacheKey = safeSymbol;
   
-  // Check cache first
   const cached = getCache(cacheKey);
   if (cached) {
     res.setHeader('X-Cache', 'HIT');
@@ -106,44 +101,53 @@ export default async function handler(req, res) {
   }
   
   try {
-    // 10 años de datos diarios
     const period1 = Math.floor(Date.now() / 1000) - (10 * 365 * 24 * 60 * 60);
     const period2 = Math.floor(Date.now() / 1000);
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${cacheKey}?period1=${period1}&period2=${period2}&interval=1d`;
     
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      // Timeout de 8 segundos
-      signal: AbortSignal.timeout(8000)
-    });
+    // Fetch Chart Data
+    const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${cacheKey}?period1=${period1}&period2=${period2}&interval=1d`;
     
-    if (!response.ok) {
-      throw new Error(`Yahoo Finance error: ${response.status} ${response.statusText}`);
+    // Fetch Fundamental Data (EPS)
+    const fundamentalUrl = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${cacheKey}?modules=defaultKeyStatistics,earnings`;
+
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    };
+
+    const [chartRes, fundRes] = await Promise.all([
+      fetch(chartUrl, { headers, signal: AbortSignal.timeout(8000) }),
+      fetch(fundamentalUrl, { headers, signal: AbortSignal.timeout(8000) })
+    ]);
+    
+    if (!chartRes.ok) throw new Error(`Yahoo Chart Error: ${chartRes.status}`);
+    
+    const chartData = await chartRes.json();
+    let fundamentals = null;
+
+    if (fundRes.ok) {
+      const fundData = await fundRes.json();
+      const result = fundData.quoteSummary?.result?.[0];
+      if (result) {
+        fundamentals = {
+          epsTrailing: result.defaultKeyStatistics?.trailingEps?.fmt || 'N/A',
+          epsForward: result.defaultKeyStatistics?.forwardEps?.fmt || 'N/A',
+          epsEstimateNextQuarter: result.earnings?.earningsChart?.quarterly?.[0]?.estimate?.fmt || 'N/A'
+        };
+      }
     }
     
-    const data = await response.json();
+    const finalData = {
+      chart: chartData.chart,
+      fundamentals
+    };
     
-    // Validate response structure
-    if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
-      throw new Error('No data found for symbol: ' + symbol);
-    }
-    
-    // Cache successful response
-    setCache(cacheKey, data);
+    setCache(cacheKey, finalData);
     res.setHeader('X-Cache', 'MISS');
     
-    return res.status(200).json(data);
+    return res.status(200).json(finalData);
   } catch (error) {
     console.error('[finance.js]', error.message);
-    
-    // Don't leak internal errors
     const status = error.name === 'TimeoutError' ? 504 : 500;
-    const message = status === 504 
-      ? 'Upstream timeout' 
-      : 'Failed to fetch market data';
-    
-    return res.status(status).json({ error: message });
+    return res.status(status).json({ error: 'Failed to fetch market data' });
   }
 }

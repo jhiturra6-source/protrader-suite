@@ -4,6 +4,7 @@ import {
   TrendingUp, Calculator, BarChart2, Search, Loader2, 
   MousePointer2, Pencil, Type, Ruler, Trash2, Eraser 
 } from 'lucide-react';
+import { useMarketData } from './hooks/useMarketData';
 
 // --- UTILIDADES DE FORMATEO ---
 const formatInputDisplay = (val) => {
@@ -57,6 +58,102 @@ const calculateEMA = (data, period) => {
   return result;
 };
 
+// --- OSCILADORES ---
+const calculateRSI = (data, period = 14) => {
+  const result = [];
+  let gains = 0, losses = 0;
+  for (let i = 1; i < data.length; i++) {
+    const diff = data[i].close - data[i - 1].close;
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
+    
+    if (i >= period) {
+      const avgGain = gains / period;
+      const avgLoss = losses / period;
+      const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+      const rsi = 100 - (100 / (1 + rs));
+      result.push({ time: data[i].time, value: parseFloat(rsi.toFixed(2)) });
+      
+      // Rolling update
+      const prevDiff = data[i - period + 1].close - data[i - period].close;
+      if (prevDiff >= 0) gains -= prevDiff;
+      else losses -= -prevDiff;
+    }
+  }
+  return result;
+};
+
+const calculateStochastic = (data, period = 14, signalPeriod = 3) => {
+  const getK = (slice) => {
+    const currentClose = slice[slice.length - 1].close;
+    let highestHigh = -Infinity, lowestLow = Infinity;
+    slice.forEach(d => {
+      if (d.high > highestHigh) highestHigh = d.high;
+      if (d.low < lowestLow) lowestLow = d.low;
+    });
+    return ((currentClose - lowestLow) / (highestHigh - lowestLow)) * 100;
+  };
+
+  const rawK = [];
+  for (let i = period - 1; i < data.length; i++) {
+    const slice = data.slice(i - period + 1, i + 1);
+    const k = getK(slice);
+    rawK.push({ time: data[i].time, value: k });
+  }
+
+  const slowD = [];
+  let sum = 0;
+  for (let i = 0; i < rawK.length; i++) {
+    sum += rawK[i].value;
+    if (i >= signalPeriod - 1) {
+      const d = sum / signalPeriod;
+      slowD.push({ time: rawK[i].time, value: parseFloat(d.toFixed(2)) });
+      sum -= rawK[i - signalPeriod + 1].value;
+    }
+  }
+  return { fastK: rawK, slowD };
+};
+
+const calculateMACD = (data, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) => {
+  const emaFast = calculateEMA(data, fastPeriod);
+  const emaSlow = calculateEMA(data, slowPeriod);
+  const macdLine = [];
+  for (let i = 0; i < emaFast.length; i++) {
+    const slowMatch = emaSlow.find(e => e.time === emaFast[i].time);
+    if (slowMatch) {
+      macdLine.push({ time: emaFast[i].time, value: parseFloat((emaFast[i].value - slowMatch.value).toFixed(2)) });
+    }
+  }
+  
+  // Signal Line (EMA of MACD)
+  const calcEmaFromValues = (values, period) => {
+    const result = [];
+    const multiplier = 2 / (period + 1);
+    let prev = null;
+    for (let i = 0; i < values.length; i++) {
+      if (i < period - 1) continue;
+      if (prev === null) {
+        let sum = 0;
+        for (let j = 0; j <= i; j++) sum += values[j].value;
+        prev = sum / (i + 1);
+      } else {
+        prev = (values[i].value - prev) * multiplier + prev;
+      }
+      result.push({ time: values[i].time, value: parseFloat(prev.toFixed(2)) });
+    }
+    return result;
+  };
+  const signalLine = calcEmaFromValues(macdLine, signalPeriod);
+  const histogram = [];
+  for (let i = 0; i < macdLine.length; i++) {
+    const sigMatch = signalLine.find(s => s.time === macdLine[i].time);
+    if (sigMatch) {
+      histogram.push({ time: macdLine[i].time, value: parseFloat((macdLine[i].value - sigMatch.value).toFixed(2)) });
+    }
+  }
+  return { macdLine, signalLine, histogram };
+};
+
 export default function App() {
   const [activeMenu, setActiveMenu] = useState(1);
   const [tickerInput, setTickerInput] = useState("AAPL");
@@ -64,29 +161,37 @@ export default function App() {
   const [activeTool, setActiveTool] = useState("pointer");
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [chartData, setChartData] = useState([]);
+  const [fundamentals, setFundamentals] = useState(null);
   
-  // Dibujos e interacción
   const [drawings, setDrawings] = useState([]);
   const [currentDrawing, setCurrentDrawing] = useState(null);
   const [trendLineColor, setTrendLineColor] = useState("#38bdf8"); 
   const [draggingTextId, setDraggingTextId] = useState(null); 
   const [chartSync, setChartSync] = useState(0); 
 
-  // Estados de Indicadores
   const [showSMA200, setShowSMA200] = useState(false);
   const [showSMA50, setShowSMA50] = useState(true);
   const [showEMA21, setShowEMA21] = useState(false);
   const [showEMA10, setShowEMA10] = useState(false);
 
-  // Tooltip flotante
+  const [showRSI, setShowRSI] = useState(false);
+  const [showStochastic, setShowStochastic] = useState(false);
+  const [showMACD, setShowMACD] = useState(false);
+
   const [tooltipData, setTooltipData] = useState(null);
 
-  // Inputs de Riesgo
   const [capital, setCapital] = useState("10000");
   const [riskPercent, setRiskPercent] = useState("1,5");
-  const [entryPrice, setEntryPrice] = useState("150,00");
-  const [stopLoss, setStopLoss] = useState("145,00");
-  const [takeProfit, setTakeProfit] = useState("165,00");
+  
+  const marketData = useMarketData(currentTicker);
+  const { entryPrice, setEntryPrice, stopLoss, setStopLoss, takeProfit, setTakeProfit } = marketData;
+  
+  useEffect(() => {
+    setChartData(marketData.chartData);
+    setIsLoadingData(marketData.isLoadingData);
+    setFundamentals(marketData.fundamentals);
+  }, [marketData.chartData, marketData.isLoadingData, marketData.fundamentals]);
+
   const [shares, setShares] = useState("100");
 
   const chartContainerRef = useRef(null);
@@ -124,50 +229,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    const fetchRealMarketData = async () => {
-      setIsLoadingData(true);
-      try {
-        const response = await fetch(`/api/finance?symbol=${currentTicker}`);
-        const json = await response.json();
-        
-        if (json.error) throw new Error(json.error);
-
-        const result = json.chart.result[0];
-        const timestamps = result.timestamp;
-        const quotes = result.indicators.quote[0];
-
-        const formattedData = [];
-        for (let i = 0; i < timestamps.length; i++) {
-          if (quotes.open[i] !== null && quotes.high[i] !== null && quotes.low[i] !== null && quotes.close[i] !== null) {
-            const dateStr = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
-            formattedData.push({
-              time: dateStr,
-              open: parseFloat(quotes.open[i].toFixed(2)),
-              high: parseFloat(quotes.high[i].toFixed(2)),
-              low: parseFloat(quotes.low[i].toFixed(2)),
-              close: parseFloat(quotes.close[i].toFixed(2))
-            });
-          }
-        }
-
-        if (formattedData.length > 0) {
-          setChartData(formattedData);
-          const lastClose = formattedData[formattedData.length - 1].close;
-          setEntryPrice(lastClose.toFixed(2).replace('.', ','));
-          setStopLoss((lastClose * 0.97).toFixed(2).replace('.', ','));
-          setTakeProfit((lastClose * 1.06).toFixed(2).replace('.', ','));
-        }
-      } catch (error) {
-        console.error("Error API:", error);
-      } finally {
-        setIsLoadingData(false);
-      }
-    };
-
-    fetchRealMarketData();
-  }, [currentTicker]);
-
-  useEffect(() => {
     if (!chartContainerRef.current) return;
 
     const chart = createChart(chartContainerRef.current, {
@@ -175,8 +236,8 @@ export default function App() {
       grid: { vertLines: { color: '#111827' }, horzLines: { color: '#111827' } },
       crosshair: { 
         mode: 0, 
-        vertLine: { color: '#38bdf8', width: 1, style: LineStyle.Dasched, labelBackgroundColor: '#0284c7' },
-        horzLine: { color: '#38bdf8', width: 1, style: LineStyle.Dasched, labelBackgroundColor: '#0284c7' }
+        vertLine: { color: '#38bdf8', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#0284c7' },
+        horzLine: { color: '#38bdf8', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#0284c7' }
       },
       rightPriceScale: { borderColor: '#1e293b', scaleMargins: { top: 0.1, bottom: 0.1 } },
       timeScale: { 
@@ -223,7 +284,6 @@ export default function App() {
       const diff = data.close - data.open;
       const pct = (diff / data.open) * 100;
 
-      // SOLUCIÓN 3: Recuperamos los cálculos de las Medias Móviles para el Tooltip
       const calcValues = {};
       if (indicatorsRef.current.sma200) {
         const val = param.seriesData.get(indicatorsRef.current.sma200);
@@ -253,7 +313,7 @@ export default function App() {
         close: formatCurrency(data.close),
         change: `${diff >= 0 ? '+' : ''}${formatCurrency(diff)} (${pct.toFixed(2)}%)`,
         isUp: diff >= 0,
-        ma: calcValues // Se inyectan en el estado del Tooltip
+        ma: calcValues
       });
     });
 
@@ -290,6 +350,7 @@ export default function App() {
         }
       }
     };
+
     syncSeries('sma200', showSMA200, calculateSMA(chartData, 200), '#f59e0b');
     syncSeries('sma50', showSMA50, calculateSMA(chartData, 50), '#3b82f6');
     syncSeries('ema21', showEMA21, calculateEMA(chartData, 21), '#ec4899');
@@ -420,7 +481,6 @@ export default function App() {
           onMouseDown={(e) => { 
             if(isPointer) { e.stopPropagation(); setDraggingTextId(d.id); } 
           }}
-          // SOLUCIÓN 1: Evento de Doble Clic para editar
           onDoubleClick={(e) => {
             if (isPointer) {
               e.stopPropagation();
@@ -446,9 +506,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 font-sans selection:bg-emerald-500/30">
-      <div className="max-w-7xl mx-auto space-y-6">
-        
-        {/* ENCABEZADO */}
+      <div className="max-w-7xl mx-auto space-y-6">        
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-500/10 rounded-xl"><TrendingUp className="w-6 h-6 text-emerald-400" /></div>
@@ -467,10 +525,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* DISTRIBUCIÓN PRINCIPAL */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          
-          {/* SECTOR IZQUIERDO */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">          
           <div className="lg:col-span-3 space-y-4">
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
               <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Parámetros de Riesgo</h2>
@@ -500,148 +555,189 @@ export default function App() {
                       <input type="text" inputMode="decimal" value={formatInputDisplay(stopLoss)} onChange={handleNumberChange(setStopLoss)} className="w-full px-2 py-1.5 bg-slate-900 border border-rose-900/50 rounded-xl text-rose-100 text-sm focus:ring-2 focus:ring-rose-500" />
                     </div>
                   </div>
-                  {activeMenu === 1 && (
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-medium text-emerald-400 mb-1">Take Profit</label>
-                        <input type="text" inputMode="decimal" value={formatInputDisplay(takeProfit)} onChange={handleNumberChange(setTakeProfit)} className="w-full px-2 py-1.5 bg-slate-900 border border-emerald-900/50 rounded-xl text-emerald-100 text-sm focus:ring-2 focus:ring-emerald-500" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-medium text-slate-400 mb-1">Acciones</label>
-                        <input type="text" inputMode="numeric" value={formatInputDisplay(shares)} onChange={handleNumberChange(setShares)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500" />
-                      </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-medium text-emerald-400 mb-1">Take Profit</label>
+                      <input type="text" inputMode="decimal" value={formatInputDisplay(takeProfit)} onChange={handleNumberChange(setTakeProfit)} className="w-full px-2 py-1.5 bg-slate-900 border border-emerald-900/50 rounded-xl text-emerald-100 text-sm focus:ring-2 focus:ring-emerald-500" />
                     </div>
-                  )}
+                    <div>
+                      <label className="block text-[10px] font-medium text-slate-400 mb-1">Acciones</label>
+                      <input type="text" inputMode="decimal" value={formatInputDisplay(shares)} onChange={handleNumberChange(setShares)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-slate-500" />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {!isInvalidLong && activeMenu === 1 && (
-              <div className="space-y-3">
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 border-l-4 border-l-rose-500 shadow-lg">
-                  <p className="text-slate-400 text-xs mb-1">Pérdida Máxima</p>
-                  <h4 className="text-2xl font-bold text-rose-100">${formatCurrency(m1_totalRisk)}</h4>
-                  <p className="text-[10px] text-rose-400/80 mt-1">{formatCurrency(m1_actualRiskPercent)}% del capital</p>
-                </div>
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 border-l-4 border-l-emerald-500 shadow-lg">
-                  <p className="text-slate-400 text-xs mb-1">Ganancia Proyectada</p>
-                  <h4 className="text-2xl font-bold text-emerald-100">${formatCurrency(m1_projectedProfit)}</h4>
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
+              <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Indicadores</h2>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showSMA200} onChange={(e) => setShowSMA200(e.target.checked)} className="accent-amber-500" /> SMA 200</label>
+                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showSMA50} onChange={(e) => setShowSMA50(e.target.checked)} className="accent-blue-500" /> SMA 50</label>
+                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showEMA21} onChange={(e) => setShowEMA21(e.target.checked)} className="accent-pink-500" /> EMA 21</label>
+                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showEMA10} onChange={(e) => setShowEMA10(e.target.checked)} className="accent-cyan-500" /> EMA 10</label>
+                
+                <div className="h-px bg-slate-800 my-2"></div>
+                
+                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showRSI} onChange={(e) => setShowRSI(e.target.checked)} className="accent-purple-500" /> RSI (14)</label>
+                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showStochastic} onChange={(e) => setShowStochastic(e.target.checked)} className="accent-orange-500" /> Stochastic</label>
+                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showMACD} onChange={(e) => setShowMACD(e.target.checked)} className="accent-indigo-500" /> MACD</label>
+              </div>
+            </div>
+
+            {fundamentals && (
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
+                <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Fundamentales</h2>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between"><span className="text-slate-400">EPS Actual</span><span className="text-emerald-400 font-bold">{fundamentals.epsTrailing}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">EPS Estimado</span><span className="text-blue-400 font-bold">{fundamentals.epsForward}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">EPS Proy. Trim.</span><span className="text-purple-400 font-bold">{fundamentals.epsEstimateNextQuarter}</span></div>
                 </div>
               </div>
             )}
           </div>
 
-          {/* SECTOR DERECHO */}
-          <div className="lg:col-span-9 bg-slate-950 border border-slate-800/80 rounded-3xl p-3 shadow-2xl relative flex flex-col">
-            
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-3 py-2.5 mb-2 bg-slate-900/40 border border-slate-800/60 rounded-2xl z-20">
-              <form onSubmit={handleSearchTicker} className="flex items-center gap-2">
-                <div className="relative">
-                  <input 
-                     type="text" value={tickerInput} onChange={(e) => setTickerInput(e.target.value.toUpperCase())}
-                     className="bg-slate-950 border border-slate-700 text-white font-bold text-xs px-2.5 py-1.5 pl-7 rounded-xl w-24 focus:ring-2 focus:ring-emerald-500 uppercase tracking-wider" placeholder="AAPL"
-                  />
-                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2" />
+          <div className="lg:col-span-9 space-y-6">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl relative">
+              <form onSubmit={handleSearchTicker} className="flex gap-2 mb-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                  <input type="text" value={tickerInput} onChange={(e) => setTickerInput(e.target.value)} placeholder="Símbolo (ej: AAPL)" className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500 uppercase" />
                 </div>
-                <button type="submit" disabled={isLoadingData} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1">
-                  {isLoadingData && <Loader2 className="w-3 h-3 animate-spin" />} Cargar
-                </button>
+                <button type="submit" className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium transition-colors">Buscar</button>
+                {isLoadingData && <Loader2 className="w-5 h-5 animate-spin text-emerald-400 my-auto" />}
               </form>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button onClick={() => setShowSMA200(!showSMA200)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA200 ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 200</button>
-                <button onClick={() => setShowSMA50(!showSMA50)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showSMA50 ? 'bg-blue-500/20 border-blue-500/50 text-blue-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>SMA 50</button>
-                {/* SOLUCIÓN 2: Regresan los botones de las Medias Exponenciales (EMA) */}
-                <button onClick={() => setShowEMA21(!showEMA21)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA21 ? 'bg-pink-500/20 border-pink-500/50 text-pink-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>EMA 21</button>
-                <button onClick={() => setShowEMA10(!showEMA10)} className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition ${showEMA10 ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>EMA 10</button>
-              </div>
-            </div>
 
-            <div className="flex flex-col md:flex-row relative">
-              <div className="flex md:flex-col gap-1.5 p-2 border-b md:border-b-0 md:border-r border-slate-800/60 bg-slate-900/30 items-center justify-start z-20 overflow-x-auto">
-                <button onClick={() => setActiveTool("pointer")} className={`p-2 rounded-lg transition ${activeTool === 'pointer' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Puntero"><MousePointer2 className="w-4 h-4" /></button>
-                
-                <div className={`flex items-center gap-1 p-1 rounded-lg transition ${activeTool === 'pencil' ? 'bg-slate-800' : 'hover:bg-slate-700'}`}>
-                  <button onClick={() => setActiveTool("pencil")} className={`p-1 transition ${activeTool === 'pencil' ? 'text-emerald-400' : 'text-slate-400 hover:text-white'}`} title="Línea de Tendencia"><Pencil className="w-4 h-4" /></button>
-                  {activeTool === 'pencil' && (
-                    <input type="color" value={trendLineColor} onChange={(e) => setTrendLineColor(e.target.value)} className="w-4 h-4 rounded cursor-pointer bg-transparent border-0 p-0" title="Color de la línea" />
-                  )}
+              <div className="relative">
+                <div ref={chartContainerRef} className="w-full h-[500px] rounded-xl overflow-hidden" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onClick={handleChartClick}>
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
+                    <defs>
+                      <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+                        <path d="M0,0 L0,6 L9,3 z" fill="#38bdf8" />
+                      </marker>
+                      <marker id="arrow-up" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+                        <path d="M0,0 L0,6 L9,3 z" fill="#38761D" />
+                      </marker>
+                      <marker id="arrow-down" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+                        <path d="M0,0 L0,6 L9,3 z" fill="#FF6966" />
+                      </marker>
+                    </defs>
+                    {drawings.map(renderDrawing)}
+                    {currentDrawing && renderDrawing({ ...currentDrawing, id: 'current' })}
+                  </svg>
                 </div>
-                
-                <button onClick={() => setActiveTool("text")} className={`p-2 rounded-lg transition ${activeTool === 'text' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Texto"><Type className="w-4 h-4" /></button>
-                <button onClick={() => setActiveTool("ruler")} className={`p-2 rounded-lg transition ${activeTool === 'ruler' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Medir Rango"><Ruler className="w-4 h-4" /></button>
-                <div className="w-px h-5 md:w-5 md:h-px bg-slate-800 my-1 shrink-0"></div>
-                <button onClick={() => setActiveTool("eraser")} className={`p-2 rounded-lg transition ${activeTool === 'eraser' ? 'bg-rose-500/20 text-rose-400' : 'text-slate-400 hover:bg-slate-700 hover:text-white'}`} title="Borrar Selección"><Eraser className="w-4 h-4" /></button>
-                <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="p-2 text-slate-500 hover:text-rose-400 rounded-lg transition md:mt-auto" title="Limpiar todo"><Trash2 className="w-4 h-4" /></button>
-              </div>
 
-              <div className="flex-1 p-1 relative flex gap-3">
-                <div className="flex-1 relative">
-                  <div 
-                    ref={chartContainerRef} 
-                    onClick={handleChartClick}
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUp}
-                    className={`w-full h-full min-h-[500px] relative ${activeTool === 'pointer' ? 'cursor-default' : 'cursor-crosshair'}`}
-                  >
-                    {tooltipData && (
-                      <div style={{ left: `${Math.min(Math.max(10, tooltipData.x + 15), 450)}px`, top: `${Math.max(10, tooltipData.y - 60)}px` }}
-                        className="absolute z-30 pointer-events-none bg-slate-900/95 border border-slate-700/80 rounded-xl p-2.5 shadow-2xl backdrop-blur-md text-[11px] font-mono min-w-[150px]"
-                      >
-                        <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5 font-sans font-bold text-white">
-                          <span className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>{tooltipData.ticker}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                          <div className="text-slate-400">Close</div><div className="text-right text-white font-semibold">{tooltipData.close}</div>
-                          <div className="text-slate-400">Open</div><div className="text-right text-white">{tooltipData.open}</div>
-                          <div className="text-slate-400">Low</div><div className="text-right text-rose-400">{tooltipData.low}</div>
-                          <div className="text-slate-400">High</div><div className="text-right text-emerald-400">{tooltipData.high}</div>
-                        </div>
-                        <div className={`mt-1.5 pt-1 border-t border-slate-800 text-right font-bold ${tooltipData.isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {tooltipData.change}
-                        </div>
-                        
-                        {/* SOLUCIÓN 3: Bloque visual que muestra las Medias en el Tooltip si están activadas */}
-                        {(showSMA200 || showSMA50 || showEMA21 || showEMA10) && (
-                          <div className="mt-1.5 pt-1.5 border-t border-slate-800 space-y-0.5">
-                            {showSMA200 && <div className="flex justify-between text-amber-300"><span>SMA 200:</span> <span>{tooltipData.ma.sma200}</span></div>}
-                            {showSMA50 && <div className="flex justify-between text-blue-300"><span>SMA 50:</span> <span>{tooltipData.ma.sma50}</span></div>}
-                            {showEMA21 && <div className="flex justify-between text-pink-300"><span>EMA 21:</span> <span>{tooltipData.ma.ema21}</span></div>}
-                            {showEMA10 && <div className="flex justify-between text-cyan-300"><span>EMA 10:</span> <span>{tooltipData.ma.ema10}</span></div>}
-                          </div>
-                        )}
-
+                {tooltipData && (
+                  <div className="absolute z-10 bg-slate-900/95 border border-slate-700 rounded-xl p-3 text-xs shadow-2xl pointer-events-none" style={{ left: tooltipData.x + 15, top: tooltipData.y + 15, minWidth: '140px' }}>
+                    <div className="font-bold text-white mb-1">{tooltipData.ticker} <span className="font-normal text-slate-400">{tooltipData.time}</span></div>
+                    <div className={`grid grid-cols-2 gap-x-4 gap-y-1 ${tooltipData.isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      <span>A: {tooltipData.open}</span><span>C: {tooltipData.close}</span>
+                      <span>M: {tooltipData.high}</span><span>m: {tooltipData.low}</span>
+                    </div>
+                    <div className={`mt-1 font-bold ${tooltipData.isUp ? 'text-emerald-400' : 'text-rose-400'}`}>{tooltipData.change}</div>
+                    {tooltipData.ma && Object.keys(tooltipData.ma).length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-slate-700 grid grid-cols-2 gap-x-2 gap-y-1 text-slate-300">
+                        {tooltipData.ma.sma200 && <span>SMA200: {tooltipData.ma.sma200}</span>}
+                        {tooltipData.ma.sma50 && <span>SMA50: {tooltipData.ma.sma50}</span>}
+                        {tooltipData.ma.ema21 && <span>EMA21: {tooltipData.ma.ema21}</span>}
+                        {tooltipData.ma.ema10 && <span>EMA10: {tooltipData.ma.ema10}</span>}
                       </div>
                     )}
                   </div>
+                )}
+              </div>
 
-                  <div className="absolute inset-0 z-10 pointer-events-none overflow-hidden" onMouseUp={handleMouseUp} onMouseMove={handleMouseMove}>
-                    <svg className="w-full h-full">
-                      <defs>
-                        <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 0 L 10 5 L 0 10 z" fill={trendLineColor} />
-                        </marker>
-                        <marker id="arrow-up" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 0 L 10 5 L 0 10 z" fill="#38761D" />
-                        </marker>
-                        <marker id="arrow-down" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 0 L 10 5 L 0 10 z" fill="#FF6966" />
-                        </marker>
-                      </defs>
-                      
-                      {drawings.map(renderDrawing)}
-                      {currentDrawing && renderDrawing(currentDrawing)}
-                    </svg>
-                  </div>
+              <div className="flex gap-2 mt-4 flex-wrap">
+                <button onClick={() => setActiveTool('pointer')} className={`p-2 rounded-lg ${activeTool === 'pointer' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><MousePointer2 className="w-4 h-4" /></button>
+                <button onClick={() => setActiveTool('pencil')} className={`p-2 rounded-lg ${activeTool === 'pencil' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><Pencil className="w-4 h-4" /></button>
+                <button onClick={() => setActiveTool('ruler')} className={`p-2 rounded-lg ${activeTool === 'ruler' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><Ruler className="w-4 h-4" /></button>
+                <button onClick={() => setActiveTool('text')} className={`p-2 rounded-lg ${activeTool === 'text' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><Type className="w-4 h-4" /></button>
+                <button onClick={() => setActiveTool('eraser')} className={`p-2 rounded-lg ${activeTool === 'eraser' ? 'bg-slate-700 text-white' : 'bg-slate-950 text-slate-400'}`}><Eraser className="w-4 h-4" /></button>
+                
+                <div className="flex items-center gap-1 ml-2">
+                  <input type="color" value={trendLineColor} onChange={(e) => setTrendLineColor(e.target.value)} className="w-6 h-6 rounded bg-transparent border-0 cursor-pointer" />
                 </div>
+                <button onClick={() => { setDrawings([]); setCurrentDrawing(null); }} className="ml-auto px-3 py-1 bg-rose-900/50 text-rose-300 rounded-lg text-xs flex items-center gap-1 hover:bg-rose-900"><Trash2 className="w-3 h-3" /> Limpiar</button>
               </div>
             </div>
 
+            {showRSI && chartData.length > 0 && (
+              <OscillatorPanel title="RSI (14)" data={calculateRSI(chartData)} color="#a855f7" min={0} max={100} overbought={70} oversold={30} />
+            )}
+            {showStochastic && chartData.length > 0 && (
+              <OscillatorPanel title="Stochastic %K" data={calculateStochastic(chartData).fastK} color="#f97316" min={0} max={100} overbought={80} oversold={20} />
+            )}
+            {showMACD && chartData.length > 0 && (
+              <MACDPanel data={calculateMACD(chartData)} />
+            )}
+
+            {activeMenu === 2 && (
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
+                <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Tamaño de Posición Ideal</h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                  <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
+                    <div className="text-xs text-slate-400 mb-1">Riesgo por Acción</div>
+                    <div className="text-xl font-bold text-rose-400">{formatCurrency(m1_riskPerShare)}</div>
+                  </div>
+                  <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
+                    <div className="text-xs text-slate-400 mb-1">Riesgo Total</div>
+                    <div className="text-xl font-bold text-amber-400">{formatCurrency(m1_totalRisk)}</div>
+                  </div>
+                  <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
+                    <div className="text-xs text-slate-400 mb-1">Ganancia Proyectada</div>
+                    <div className="text-xl font-bold text-emerald-400">{formatCurrency(m1_projectedProfit)}</div>
+                  </div>
+                </div>
+                {isInvalidLong && (
+                  <div className="mt-4 p-3 bg-rose-950/50 border border-rose-900 rounded-xl text-rose-300 text-xs text-center">
+                    ⚠️ Advertencia: El precio de entrada debe ser mayor al Stop Loss para una posición larga.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+const OscillatorPanel = ({ title, data, color, min, max, overbought, oversold }) => {
+  if (!data || data.length === 0) return null;
+  const last = data[data.length - 1].value;
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 shadow-xl">
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-sm font-bold text-white">{title}</h3>
+        <span className="text-xs font-mono" style={{ color }}>{last.toFixed(2)}</span>
+      </div>
+      <div className="h-2 bg-slate-800 rounded-full relative overflow-hidden">
+        <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-slate-700 to-transparent" style={{ width: `${(last / max) * 100}%` }}></div>
+        <div className="absolute top-0 bottom-0 w-px bg-rose-500" style={{ left: `${(overbought / max) * 100}%` }}></div>
+        <div className="absolute top-0 bottom-0 w-px bg-emerald-500" style={{ left: `${(oversold / max) * 100}%` }}></div>
+      </div>
+    </div>
+  );
+};
+
+const MACDPanel = ({ data }) => {
+  if (!data || !data.macdLine || data.macdLine.length === 0) return null;
+  const last = data.macdLine[data.macdLine.length - 1].value;
+  const hist = data.histogram[data.histogram.length - 1]?.value || 0;
+  const isPos = last >= 0;
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 shadow-xl">
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-sm font-bold text-white">MACD (12, 26, 9)</h3>
+        <div className="flex gap-3 text-xs font-mono">
+          <span className={isPos ? 'text-emerald-400' : 'text-rose-400'}>MACD: {last.toFixed(2)}</span>
+          <span className={hist >= 0 ? 'text-emerald-400' : 'text-rose-400'}>HIST: {hist.toFixed(2)}</span>
+        </div>
+      </div>
+      <div className="h-2 bg-slate-800 rounded-full relative overflow-hidden">
+        <div className={`absolute top-0 bottom-0 w-px bg-slate-500 left-1/2`}></div>
+        <div className={`absolute inset-y-0 ${isPos ? 'left-1/2' : 'right-1/2'} ${isPos ? 'bg-emerald-500/50' : 'bg-rose-500/50'}`} style={{ width: `${Math.min(Math.abs(last) * 5, 50)}%` }}></div>
+      </div>
+    </div>
+  );
+};
