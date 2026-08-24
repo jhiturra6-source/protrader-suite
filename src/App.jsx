@@ -507,6 +507,27 @@ export default function App() {
         </g>
       );
     }
+    if (d.type === 'line' || d.type === 'horizontal-line' || d.type === 'vertical-line') {
+      let x1 = timeScale.logicalToCoordinate(d.logical1);
+      let y1 = series.priceToCoordinate(d.price1);
+      let x2 = timeScale.logicalToCoordinate(d.logical2);
+      let y2 = series.priceToCoordinate(d.price2);
+
+      if (d.type === 'horizontal-line') { x1 = 0; x2 = chartRef.current.timeScale().width(); }
+      else if (d.type === 'vertical-line') { y1 = 0; y2 = 400; } // Altura del chart
+
+      return (
+        <g key={d.id} {...commonProps}>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={d.color || '#38bdf8'} strokeWidth="1.5" />
+          {d.type !== 'horizontal-line' && d.type !== 'vertical-line' && (
+            <>
+              <circle cx={x1} cy={y1} r="5" fill={d.color || '#38bdf8'} data-handle data-id={d.id} data-pointindex="1" className="cursor-grab" />
+              <circle cx={x2} cy={y2} r="5" fill={d.color || '#38bdf8'} data-handle data-id={d.id} data-pointindex="2" className="cursor-grab" />
+            </>
+          )}
+        </g>
+      );
+    }
     if (d.type === 'rectangle') {
       const rectX = Math.min(x1, x2);
       const rectY = Math.min(y1, y2);

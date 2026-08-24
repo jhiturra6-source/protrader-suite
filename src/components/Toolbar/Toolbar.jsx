@@ -1,11 +1,14 @@
 import React from 'react';
-import { MousePointer2, Pencil, Type, Ruler, Trash2, Eraser, Square } from 'lucide-react';
+import { MousePointer2, Pencil, Type, Ruler, Trash2, Eraser, Square, Minus, ArrowLeftRight, ArrowUpDown } from 'lucide-react';
 
 const Toolbar = ({ activeTool, setActiveTool, trendLineColor, setTrendLineColor, onClearDrawings }) => {
   const tools = [
     { id: 'pointer', icon: MousePointer2 },
     { id: 'pencil', icon: Pencil },
     { id: 'rectangle', icon: Square },
+    { id: 'line', icon: Minus },
+    { id: 'horizontal-line', icon: ArrowLeftRight },
+    { id: 'vertical-line', icon: ArrowUpDown },
     { id: 'ruler', icon: Ruler },
     { id: 'text', icon: Type },
     { id: 'eraser', icon: Eraser },
