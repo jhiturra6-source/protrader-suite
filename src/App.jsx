@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createChart, LineStyle } from 'lightweight-charts';
 import { TrendingUp, Calculator, BarChart2, Search, Loader2 } from 'lucide-react';
 import { useMarketData } from './hooks/useMarketData';
 import Toolbar from './components/Toolbar/Toolbar';
@@ -388,6 +389,8 @@ export default function App() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    if (!chartRef.current || !seriesRef.current) return;
+    
     const logical = chartRef.current.timeScale().coordinateToLogical(x);
     const price = seriesRef.current.coordinateToPrice(y);
 
@@ -405,6 +408,8 @@ export default function App() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    if (!chartRef.current || !seriesRef.current) return;
+    
     if (!chartRef.current || !seriesRef.current) return;
     
     const logical = chartRef.current.timeScale().coordinateToLogical(x);
