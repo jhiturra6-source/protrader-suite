@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TrendingUp, BarChart2 } from 'lucide-react';
+import { TrendingUp, Settings, BarChart2 } from 'lucide-react';
 import { useMarketData } from './hooks/useMarketData';
 import Toolbar from './components/Toolbar/Toolbar';
 import ChartDashboard from './components/Chart/ChartDashboard';
@@ -22,15 +22,16 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#010102] text-[#d0d6e0] font-sans">
-      <header className="border-b border-[rgba(255,255,255,0.05)] px-6 py-4 flex items-center justify-between">
+      <header className="border-b border-[rgba(255,255,255,0.05)] px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <TrendingUp className="w-6 h-6 text-[#5e6ad2]" />
-          <h1 className="text-lg font-semibold text-[#f7f8f8]">ProTrader Suite</h1>
+          <TrendingUp className="w-5 h-5 text-[#5e6ad2]" />
+          <h1 className="text-sm font-semibold text-[#f7f8f8]">ProTrader Suite</h1>
         </div>
+        <div className="text-xs text-[#62666d]">{currentTicker} | {interval.toUpperCase()}</div>
       </header>
 
-      <main className="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-9">
+      <main className="p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <div className="lg:col-span-9 relative">
           <Toolbar 
             activeTool={activeTool} 
             setActiveTool={setActiveTool} 
@@ -41,18 +42,19 @@ export default function App() {
           <ChartDashboard 
             chartData={marketData.chartData}
             drawings={drawings}
-            indicators={[]}
+            indicators={[]} 
           />
         </div>
         
-        <div className="lg:col-span-3 space-y-4">
+        <aside className="lg:col-span-3 flex flex-col gap-4">
           <RiskCalculator 
             capital={capital}
             riskPercent={riskPercent}
             entryPrice={entryPrice}
             stopLoss={stopLoss}
           />
-        </div>
+          {/* Aquí irán los controles de indicadores en el futuro */}
+        </aside>
       </main>
     </div>
   );
