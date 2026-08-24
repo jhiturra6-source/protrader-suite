@@ -180,6 +180,7 @@ export default function App() {
   const [trendLineColor, setTrendLineColor] = useState("#38bdf8"); 
   const [draggingTextId, setDraggingTextId] = useState(null); 
   const [draggingHandle, setDraggingHandle] = useState(null); // { id, pointIndex }
+  const [, setChartSync] = useState(0);
 
   const [showSMA200, setShowSMA200] = useState(false);
   const [sma200Period, setSma200Period] = useState(200);
