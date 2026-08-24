@@ -167,7 +167,7 @@ export default function App() {
     try {
       const saved = localStorage.getItem('protrader-drawings');
       return saved ? JSON.parse(saved) : [];
-    } catch (e) {
+    } catch {
       return [];
     }
   });
@@ -180,12 +180,15 @@ export default function App() {
   const [trendLineColor, setTrendLineColor] = useState("#38bdf8"); 
   const [draggingTextId, setDraggingTextId] = useState(null); 
   const [draggingHandle, setDraggingHandle] = useState(null); // { id, pointIndex }
-  const [chartSync, setChartSync] = useState(0); 
 
   const [showSMA200, setShowSMA200] = useState(false);
+  const [sma200Period, setSma200Period] = useState(200);
   const [showSMA50, setShowSMA50] = useState(true);
+  const [sma50Period, setSma50Period] = useState(50);
   const [showEMA21, setShowEMA21] = useState(false);
+  const [ema21Period, setEma21Period] = useState(21);
   const [showEMA10, setShowEMA10] = useState(false);
+  const [ema10Period, setEma10Period] = useState(10);
 
   const [showRSI, setShowRSI] = useState(false);
   const [showStochastic, setShowStochastic] = useState(false);
@@ -215,7 +218,6 @@ export default function App() {
   const linesRef = useRef({});
 
   const numCapital = parseToFloat(capital);
-  const numRiskPercent = parseToFloat(riskPercent);
   const numEntryPrice = parseToFloat(entryPrice);
   const numStopLoss = parseToFloat(stopLoss);
   const numTakeProfit = parseToFloat(takeProfit);
@@ -224,7 +226,6 @@ export default function App() {
   const m1_riskPerShare = numEntryPrice - numStopLoss;
   const m1_totalRisk = numShares * m1_riskPerShare;
   const m1_projectedProfit = (numTakeProfit - numEntryPrice) * numShares;
-  const m1_actualRiskPercent = numCapital > 0 ? (m1_totalRisk / numCapital) * 100 : 0; 
   const isInvalidLong = numEntryPrice <= numStopLoss && numEntryPrice > 0;
 
   const handleNumberChange = (setter) => (e) => {
@@ -358,17 +359,17 @@ export default function App() {
         indicatorsRef.current[key].setData(data);
       } else {
         if (indicatorsRef.current[key] && chartRef.current) {
-          try { chart.removeSeries(indicatorsRef.current[key]); } catch (e) {}
+          try { chart.removeSeries(indicatorsRef.current[key]); } catch {}
           delete indicatorsRef.current[key];
         }
       }
     };
 
-    syncSeries('sma200', showSMA200, calculateSMA(chartData, 200), '#f59e0b');
-    syncSeries('sma50', showSMA50, calculateSMA(chartData, 50), '#3b82f6');
-    syncSeries('ema21', showEMA21, calculateEMA(chartData, 21), '#ec4899');
-    syncSeries('ema10', showEMA10, calculateEMA(chartData, 10), '#06b6d4');
-  }, [chartData, showSMA200, showSMA50, showEMA21, showEMA10]);
+    syncSeries('sma200', showSMA200, calculateSMA(chartData, sma200Period), '#f59e0b');
+    syncSeries('sma50', showSMA50, calculateSMA(chartData, sma50Period), '#3b82f6');
+    syncSeries('ema21', showEMA21, calculateEMA(chartData, ema21Period), '#ec4899');
+    syncSeries('ema10', showEMA10, calculateEMA(chartData, ema10Period), '#06b6d4');
+  }, [chartData, showSMA200, sma200Period, showSMA50, sma50Period, showEMA21, ema21Period, showEMA10, ema10Period]);
 
   const handleMouseDown = (e) => {
     if (activeTool === 'pointer') {
@@ -645,10 +646,26 @@ export default function App() {
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
               <h2 className="text-sm font-bold text-white mb-4 uppercase tracking-wider">Indicadores</h2>
               <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showSMA200} onChange={(e) => setShowSMA200(e.target.checked)} className="accent-amber-500" /> SMA 200</label>
-                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showSMA50} onChange={(e) => setShowSMA50(e.target.checked)} className="accent-blue-500" /> SMA 50</label>
-                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showEMA21} onChange={(e) => setShowEMA21(e.target.checked)} className="accent-pink-500" /> EMA 21</label>
-                <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={showEMA10} onChange={(e) => setShowEMA10(e.target.checked)} className="accent-cyan-500" /> EMA 10</label>
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={showSMA200} onChange={(e) => setShowSMA200(e.target.checked)} className="accent-amber-500" />
+                  SMA
+                  <input type="number" value={sma200Period} onChange={(e) => setSma200Period(Number(e.target.value))} className="w-12 px-1 bg-slate-950 border border-slate-700 rounded text-right" />
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={showSMA50} onChange={(e) => setShowSMA50(e.target.checked)} className="accent-blue-500" />
+                  SMA
+                  <input type="number" value={sma50Period} onChange={(e) => setSma50Period(Number(e.target.value))} className="w-12 px-1 bg-slate-950 border border-slate-700 rounded text-right" />
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={showEMA21} onChange={(e) => setShowEMA21(e.target.checked)} className="accent-pink-500" />
+                  EMA
+                  <input type="number" value={ema21Period} onChange={(e) => setEma21Period(Number(e.target.value))} className="w-12 px-1 bg-slate-950 border border-slate-700 rounded text-right" />
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={showEMA10} onChange={(e) => setShowEMA10(e.target.checked)} className="accent-cyan-500" />
+                  EMA
+                  <input type="number" value={ema10Period} onChange={(e) => setEma10Period(Number(e.target.value))} className="w-12 px-1 bg-slate-950 border border-slate-700 rounded text-right" />
+                </div>
                 
                 <div className="h-px bg-slate-800 my-2"></div>
                 
@@ -775,7 +792,7 @@ export default function App() {
   );
 }
 
-const OscillatorPanel = ({ title, data, color, min, max, overbought, oversold }) => {
+const OscillatorPanel = ({ title, data, color, max, overbought, oversold }) => {
   if (!data || data.length === 0) return null;
   const last = data[data.length - 1].value;
   return (

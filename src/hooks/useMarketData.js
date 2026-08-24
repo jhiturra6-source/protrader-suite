@@ -51,7 +51,7 @@ export const useMarketData = (currentTicker, interval) => {
     };
 
     fetchRealMarketData();
-  }, [currentTicker]);
+  }, [currentTicker, interval]);
 
   return { chartData, fundamentals, isLoadingData, entryPrice, setEntryPrice, stopLoss, setStopLoss, takeProfit, setTakeProfit };
 };

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, forwardRef } from 'react';
-import { createChart, LineStyle } from 'lightweight-charts';
+import { createChart } from 'lightweight-charts';
 
 const ChartContainer = forwardRef(({ data, children, onMouseDown, onMouseMove, onMouseUp, onClick }, ref) => {
   const chartContainerRef = useRef(null);
